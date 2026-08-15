@@ -25,14 +25,6 @@
 // Tracks which update has been recived
 static int64_t update_id = 0;
 
-// TODO This shoudn't be here
-static const esp_http_client_config_t send_config = {
-    .url = BASE_URL BOT_TOKEN "/sendMessage",
-    .cert_pem = TELEGRAM_ROOT_CERT,
-    .method = HTTP_METHOD_POST,
-    .timeout_ms = 10000,
-};
-
 // MAIN
 void app_main(void)
 {
@@ -79,8 +71,8 @@ void app_main(void)
         if(ret == ESP_OK)
         {
             // Elaborate response
-            command_t *commands = parse(response);
-            uint32_t num_of_commands = sizeof(commands)/sizeof(command_t);
+            reply_struct_t_t *commands = parse(response);
+            uint32_t num_of_commands = sizeof(commands)/sizeof(reply_struct_t_t);
 
             for(uint32_t i=0; i<num_of_commands; i++)
                 elaborate(commands[i]);
@@ -133,7 +125,7 @@ esp_err_t pool_updates(char* response)
     return ret;
 }
 
-command_t *parse(char* response)
+reply_struct_t *parse(char* response)
 {
     cJSON *root = cJSON_Parse(response);
 
@@ -158,7 +150,7 @@ command_t *parse(char* response)
 
     // Parse
     cJSON *result = cJSON_GetObjectItem(root, "result");
-    command_t ret[cJSON_GetArraySize(result)];
+    reply_struct_t ret[cJSON_GetArraySize(result)];
     uint32_t counter = 0;
     cJSON_ArrayForEach(update, result)
     {
@@ -172,7 +164,8 @@ command_t *parse(char* response)
             #if DEBUG
             ESP_LOGI(TAG, "Non authorized chat id");
             #endif
-            ret[counter] = NO_COMMAND;
+            ret[counter].command = NO_COMMAND;
+            ret[counter].message_id = -1;
         }
 
         // Authorized users
@@ -180,54 +173,66 @@ command_t *parse(char* response)
         {
             // Return requested action
             char* text = cJSON_GetObjectItem(update, "text")->valuestring;
-            char* data = cJSON_GetObjectItem(update, "data")->valuestring;
 
+            // Data (in case of a callback query)
+            cJSON* id_data = cJSON_GetObjectItem(update, "data");
+            char* data = id_data ? id_data->valuestring : nullptr;
+
+            // Message id (in case of a callback query)
+            cJSON* id_item = cJSON_GetObjectItem(update, "message_id");
+            int id = id_item ? id_item->valueint : -1;
+            ret[counter].message_id = id;
+
+            // Message data
             if(text == "/start")
-                ret[counter] = START;
+            {
+                ret[counter].command = START;
+            }
             else
             {
                 switch (data)
                 {
                     case "home":
-                        ret[counter] = HOME;
+                        ret[counter].command = HOME;
+                        break;
                     case "status":
-                        ret[counter] = STATUS;
+                        ret[counter].command = STATUS;
                         break;
                     case "wake":
-                        ret[counter] = WAKE;
+                        ret[counter].command = WAKE;
                         break;
                     case "poweroff_menu":
-                        ret[counter] = POWEROFF_MENU;
+                        ret[counter].command = POWEROFF_MENU;
                         break;
                     case "poweroff_now":
-                        ret[counter] = POWEROFF_NOW;
+                        ret[counter].command = POWEROFF_NOW;
                         break;
                     case "poweroff_30":
-                        ret[counter] = POWEROFF_30;
+                        ret[counter].command = POWEROFF_30;
                         break;
                     case "poweroff_60":
-                        ret[counter] = POWEROFF_60;
+                        ret[counter].command = POWEROFF_60;
                         break;
                     case "poweroff_120":
-                        ret[counter] = POWEROFF_120;
+                        ret[counter].command = POWEROFF_120;
                         break;
                     case "reboot_menu":
-                        ret[counter] = REBOOT_MENU;
+                        ret[counter].command = REBOOT_MENU;
                         break;
                     case "reboot_now":
-                        ret[counter] = REBOOT_NOW;
+                        ret[counter].command = REBOOT_NOW;
                         break;
                     case "reboot_30":
-                        ret[counter] = REBOOT_30;
+                        ret[counter].command = REBOOT_30;
                         break;
                     case "reboot_60":
                         ret[counter] = REBOOT_60;
                         break;
                     case "reboot_120":
-                        ret[counter] = REBOOT_120;
+                        ret[counter].command = REBOOT_120;
                         break;
                     default:
-                        ret[counter] = NO_COMMAND;
+                        ret[counter].command = NO_COMMAND;
                         break;
                 }
             }
@@ -239,14 +244,15 @@ command_t *parse(char* response)
     return ret;
 }
 
-void elaborate (command_t command)
+void elaborate (reply_struct_t reply)
 {
-    switch(command)
+    switch(reply.command)
     {
         case START:
-            send_message(MENU_BODY);
+            send_message(MENU_START MENU_TEXT MENU_KEYBOARD MENU_END);
             break;
         case HOME:
+            edit_message(MENU_START MENU_TEXT ("\"message_id\":\"%d:\",", reply.message_id) MENU_KEYBOARD MENU_END);
             break;
         case STATUS:
             break;
@@ -279,13 +285,20 @@ void elaborate (command_t command)
     }
 }
 
-esp_err_t send_message(bool hasBody, const char *body)
+esp_err_t send_message(const char *body)
 {
     // Setup https connection
+    const esp_http_client_config_t send_config = {
+        .url = BASE_URL BOT_TOKEN "/sendMessage",
+        .cert_pem = TELEGRAM_ROOT_CERT,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 10000,
+    };
+
     esp_http_client_handle_t client = esp_http_client_init(&send_config);
     esp_http_client_set_header(client, "Content-Type", "application/json");
 
-    esp_http_client_set_post_field(client, json_body, strlen(json_body));
+    esp_http_client_set_post_field(client, body, strlen(body));
 
     // Send message
     esp_err_t err = esp_http_client_perform(client);
@@ -294,7 +307,42 @@ esp_err_t send_message(bool hasBody, const char *body)
     if (err != ESP_OK)
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(err));
 
-    if (status != 200)
+
+    if (esp_http_client_get_status_code(client) != 200)
+        ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
+    else
+        ESP_LOGI(TAG, "POST - Success");
+    #endif
+
+    // Close connection
+    esp_http_client_cleanup(client);
+    return err;
+}
+
+esp_err_t edit_message(const char *body)
+{
+    // Setup https connection
+    const esp_http_client_config_t send_config = {
+        .url = BASE_URL BOT_TOKEN "/editMessageText",
+        .cert_pem = TELEGRAM_ROOT_CERT,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 10000,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&send_config);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+
+    esp_http_client_set_post_field(client, body, strlen(body));
+
+    // Send message
+    esp_err_t err = esp_http_client_perform(client);
+
+    #if DEBUG
+    if (err != ESP_OK)
+        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(err));
+
+
+    if (esp_http_client_get_status_code(client) != 200)
         ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
     else
         ESP_LOGI(TAG, "POST - Success");

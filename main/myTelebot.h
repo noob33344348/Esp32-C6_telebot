@@ -23,7 +23,7 @@ esp_err_t pool_updates(char* response);
  * @return
  *  - See command.h for command types.
  */
-command_t *parse(char* response);
+reply_struct_t_t *parse(char* response);
 
 /**
  *
@@ -38,7 +38,7 @@ command_t *parse(char* response);
  *  - ESP_OK on success
  *  - Other errors on failure. See esp_err.h for error codes.
  */
-esp_err_t elaborate (command_t command);
+esp_err_t elaborate (reply_struct_t command);
 
 /**
  *
@@ -73,14 +73,25 @@ int localApiCall (void);
 
 /**
  *
- * @brief Send a message with a given 'body'
+ * @brief Send a message with a given 'body'.
  *
  *
  * @return
  *  - ESP_OK on success
  *  - Other errors on failure. See esp_err.h for error codes.
  */
-esp_err_t send_message(bool hasBody, const char *body);
+esp_err_t send_message(const char *body);
+
+/**
+ *
+ * @brief Edit last sent message with a given 'body'.
+ *
+ *
+ * @return
+ *  - ESP_OK on success
+ *  - Other errors on failure. See esp_err.h for error codes.
+ */
+esp_err_t edit_message(const char *body);
 
 /**
  *

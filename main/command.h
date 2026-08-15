@@ -21,4 +21,11 @@ typedef enum
     NO_COMMAND
 } command_t;
 
+
+typedef struct
+{
+    commant_t command;
+    int64_t message_id;
+} reply_struct_t;
+
 #endif
