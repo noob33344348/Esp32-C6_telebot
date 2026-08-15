@@ -52,14 +52,21 @@ void wakeOnLan (void);
 
 /**
  *
- * @brief Get the status of the server
+ * @brief Start ping to get the status of the server
  *
  *
  * @return
- *  - false: server is down
- *  - true: server is up
+ *  - ESP_OK on success
+ *  - Other errors on failure. See esp_err.h for error codes.
  */
-bool status(void);
+esp_err_t status(void);
+
+/**
+ *
+ * @brief Callback containg the status of the server
+ *
+ */
+void ping_callback(bool isRunning);
 
 /**
  *

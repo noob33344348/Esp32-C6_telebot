@@ -18,12 +18,16 @@
 // Define the enum for the commands used
 #include "command_t.h"
 
+// Simple ping functions implementations
+#include my_ping.h
+
 // Debugging
 #define DEBUG true
 #define TAG "Telebot"
 
 // Tracks which update has been recived
 static int64_t update_id = 0;
+static int64_t latest_status_message_id = -1;
 
 // MAIN
 void app_main(void)
@@ -255,6 +259,12 @@ void elaborate (reply_struct_t reply)
             edit_message(MENU_START MENU_TEXT ("\"message_id\":\"%d:\",", reply.message_id) MENU_KEYBOARD MENU_END);
             break;
         case STATUS:
+            latest_status_message_id = reply.message_id;
+            esp_err_t err = ping_go();
+            #if DEBUG
+            if(err != ESP_OK)
+                ESP_LOGE(TAG, "Failed - Couldn't start a new ping session");
+            #endif
             break;
         case WAKE:
             break;
@@ -392,3 +402,15 @@ void wakeOnLan(void)
     #endif
 }
 
+void ping_callback(bool isRunning)
+{
+    const char* body;
+    // TODO complete body and use latest_status_message_id
+    if(isRunning)
+        body = "yes";
+    else
+        body = "noooo";
+
+    edit_message(body);
+    ping_stop();
+}
