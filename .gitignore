@@ -1,0 +1,8 @@
+bot_settings.h
+environment.h
+build/
+components/
+CMakeLists.txt
+sdkconfig
+sdkconfig.old
+log.txt

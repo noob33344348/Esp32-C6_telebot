@@ -404,13 +404,24 @@ void wakeOnLan(void)
 
 void ping_callback(bool isRunning)
 {
-    const char* body;
-    // TODO complete body and use latest_status_message_id
-    if(isRunning)
-        body = "yes";
-    else
-        body = "noooo";
-
-    edit_message(body);
     ping_stop();
+
+    if(latest_status_message_id == -1)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "Inconsistent call to ping_callback with latest_status_message_id: -1. - Couldn't edit_the message");
+        #endif
+        return;
+    }
+
+    // Go back to home message
+    reply_struct_t home;
+    home.command = HOME;
+    home.message_id = latest_status_message_id;
+    elaborate(home);
+
+    // But edit the text to show the server status
+    const char* body = "{\"chat_id\": \"AUTHORIZED_CHAT_ID\", \"message_id\": %d, \"text\": \"Status:\" " (isRunning ? "Running":"Sleepy") "}";
+    edit_message(body);
+
 }
