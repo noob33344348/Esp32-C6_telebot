@@ -6,3 +6,4 @@ CMakeLists.txt
 sdkconfig
 sdkconfig.old
 log.txt
+partitions.csv

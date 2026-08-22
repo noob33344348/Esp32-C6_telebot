@@ -5,25 +5,27 @@
  *
  * @brief Request updates
  *
- * Important!
- *  This function modifies the 'response' parameter.
- *
+ * IMPORTANT! This will modify 'buffer->buffer' allocating resources,
+ *  it's the caller responsability to disallocate them via free.
  *
  * @return
  *  - ESP_OK on success
  *  - Other errors on failure. See esp_err.h for error codes.
  */
-esp_err_t pool_updates(char* response);
+esp_err_t pool_updates(http_buffer_t *buffer, void* callback);
 
 /**
  *
  * @brief Parse the response obtained and extract the command requested from the user
  *
+ * IMPORTANT! It modifies a global variable 'update_id' to keep track of which
+ *  messages has been elaborated.
+ *
  *
  * @return
  *  - See command.h for command types.
  */
-reply_struct_t_t *parse(char* response);
+parse_t parse(char *response);
 
 /**
  *
@@ -70,6 +72,14 @@ void ping_callback(bool isRunning);
 
 /**
  *
+ * @brief Callbacks for ping
+ *
+ */
+void test_on_ping_success(void);
+void test_on_ping_timeout(void);
+
+/**
+ *
  * @brief Calls the APIs of the server
  *
  *
@@ -110,5 +120,25 @@ esp_err_t edit_message(const char *body);
  *  - Other errors on failure. See esp_err.h for error codes.
  */
 esp_err_t telegram_answer_callback(const char *callback_query_id);
+
+/**
+ *
+ * @brief SNTP Time Synchronization
+ *
+ *
+ * @return
+ *  - true if synced, false otherwise.
+ */
+bool my_sync(void);
+
+/**
+ *
+ * @brief Check WiFi connection, if disconnected it tries to reconnect
+ *
+ *
+ * @return
+ *  - true if connected/reconnected, false otherwise.
+ */
+bool check_connection(void);
 
 #endif

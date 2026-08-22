@@ -1,10 +1,12 @@
 // Premade libraries
 #include <stdio.h>
+#include <string.h>
 #include "esp_http_client.h"
 #include "cJSON.h"
-
-// Documentation of IMPLEMENTATIONS
-#include "myTelebot.h"
+#include "esp_log.h"
+#include "esp_sntp.h"
+#include "esp_netif_sntp.h"
+#include "esp_crt_bundle.h"
 
 // Custom wifi driver (station mode only)
 #include "wifi_sta.h"
@@ -16,14 +18,71 @@
 #include "bot_settings.h"
 
 // Define the enum for the commands used
-#include "command_t.h"
+#include "my_types.h"
 
 // Simple ping functions implementations
-#include my_ping.h
+#include "my_ping.h"
+
+// Documentation of IMPLEMENTATIONS
+#include "myTelebot.h"
 
 // Debugging
 #define DEBUG true
 #define TAG "Telebot"
+
+// STATICS
+
+// Callback for reading when poolling for updates
+static esp_err_t http_event_handler(esp_http_client_event_t *evt)
+{
+    if (evt == NULL) {
+        return ESP_FAIL;
+    }
+
+    if (evt->event_id != HTTP_EVENT_ON_DATA) {
+        return ESP_OK;
+    }
+
+    http_buffer_t *http_buffer = (http_buffer_t *)evt->user_data;
+
+    // Check if buffer is big enough
+    size_t required = http_buffer->length + evt->data_len + 1;
+    if(http_buffer->capacity < required) // Expand buffer
+    {
+        // Calculate new capacity
+        size_t new_capacity = http_buffer->capacity == 0 ? 512 : http_buffer->capacity * 2;
+        while(new_capacity < required)
+            new_capacity *= 2;
+
+        // Realloc
+        char *new_buffer = realloc(http_buffer->buffer, new_capacity);
+
+        if(new_buffer == NULL)
+        {
+            #if DEBUG
+            ESP_LOGE(TAG, "Out of memory while reading http response");
+            #endif
+            return ESP_ERR_NO_MEM;
+        }
+        http_buffer->buffer = new_buffer;
+        http_buffer->capacity = new_capacity;
+    }
+
+    // Read http response
+    memcpy(http_buffer->buffer + http_buffer->length, evt->data, evt->data_len);
+
+    http_buffer->length += evt->data_len;
+    http_buffer->buffer[http_buffer->length] = '\0';
+
+    #if DEBUG
+    ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA: %d bytes", evt->data_len);
+    ESP_LOGI(TAG, "Data: %.*s",
+                evt->data_len,
+                (char *)evt->data);
+    #endif
+    return ESP_OK;
+}
+
 
 // Tracks which update has been recived
 static int64_t update_id = 0;
@@ -32,237 +91,362 @@ static int64_t latest_status_message_id = -1;
 // MAIN
 void app_main(void)
 {
+    #if DEBUG
+    ESP_LOGI(TAG, "Telebot started");
+
+    size_t cert_len =
+    telegram_root_pem_end - telegram_root_pem_start;
+    ESP_LOGI("TLS", "CA certificate size: %zu", cert_len);
+    ESP_LOGI("TLS", "CA: %s", telegram_root_pem_start);
+    #endif
+
+    // Return value
     esp_err_t ret;
 
     // Wifi connection
     ret = my_wifi_init();
-    if(ret != ESP_OK)
+    while(ret != ESP_OK)
     {
         #if DEBUG
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
         #endif
-        return;
+        ret = my_wifi_init();
+        for(volatile uint32_t i=0; i<100000; i++);
+
     }
 
     ret = my_wifi_start();
-    if(ret != ESP_OK)
+    while(ret != ESP_OK)
     {
+
         #if DEBUG
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
         #endif
-        return;
+        ret = my_wifi_start();
+        for(volatile uint32_t i=0; i<100000; i++);
+
     }
 
     // Main loop
     while (1)
     {
-        // Try to reconnect until it works
-        while(my_wifi_status() == false)
-        {
-            ret = my_wifi_reconnect();
-            if(ret != ESP_OK)
-            {
-                #if DEBUG
-                ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
-                #endif
-                return;
-            }
-        }
+        #if DEBUG
+        ESP_LOGI(TAG, "Entered main task");
+        #endif
+
+        // Check if connected and synced
+        if(!check_connection())
+            break;
+
+        if(!my_sync())
+            break;
 
         // Look for updates
-        char *response;
-        ret = pool_updates(response);
-        if(ret == ESP_OK)
-        {
-            // Elaborate response
-            reply_struct_t_t *commands = parse(response);
-            uint32_t num_of_commands = sizeof(commands)/sizeof(reply_struct_t_t);
+        #if DEBUG
+        ESP_LOGI(TAG, "Looking for updates");
+        #endif
 
-            for(uint32_t i=0; i<num_of_commands; i++)
-                elaborate(commands[i]);
+        http_buffer_t http_buffer = {
+            .buffer = NULL,
+            .length = 0,
+            .capacity = 0
+        };
+        ret = pool_updates(&http_buffer, http_event_handler);
+
+        #if DEBUG
+        ESP_LOGI(TAG, "Response length: %d", http_buffer.length);
+        #endif
+
+
+        if(ret == ESP_OK) // Elaborate response
+        {
+            #if DEBUG
+            ESP_LOGI(TAG, "Parsing");
+            #endif
+            parse_t parse_out = parse(http_buffer.buffer);
+
+            for(uint32_t i=0; i<parse_out.count; i++)
+                elaborate(parse_out.reply[i]);
 
         }
         #if DEBUG
         else
-            ESP_LOGW(TAG, "Failed to retrive messages: %d", esp_err_to_name(err));
+            ESP_LOGW(TAG, "Failed to retrive messages: %d", esp_err_to_name(ret));
         #endif
 
+        free(http_buffer.buffer);
+
         // Wait
-        for(volatile uint32_t i=0; i<100000; i++);
+        #if DEBUG
+        ESP_LOGI(TAG, "Stop");
+        #endif
+        for(volatile uint32_t i=0; i<1000000; i++);
     }
 }
 
 // IMPLEMENTATIONS
-
-esp_err_t pool_updates(char* response)
+bool check_connection(void)
 {
+    // Try to reconnect until it works
+    esp_err_t err;
+    uint32_t limit;
+    for(limit = 100000; limit>0 && my_wifi_status() == false; limit--)
+    {
+        err = my_wifi_reconnect();
+        while(err != ESP_OK)
+        {
+            #if DEBUG
+            ESP_LOGI(TAG, "Reconnecting...");
+            #endif
+            for(volatile uint32_t i=0; i<1000000; i++);
+            err = my_wifi_reconnect();
+        }
+    }
+    #if DEBUG
+    if(limit == 0)
+        ESP_LOGE(TAG, "Failed to connect - %s", esp_err_to_name(err));
+    #endif
+    return my_wifi_status();
+}
 
+bool my_sync(void)
+{
+    static bool synced = false;
+    if(!synced)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "Trying to sync");
+        #endif
+
+        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("time.cloudflare.com");
+        esp_netif_sntp_init(&config);
+        if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
+            #if DEBUG
+            ESP_LOGE(TAG, "CRITICAL! Failed to update system time within 10s timeout");
+            #endif
+            return false;
+        }
+        #if DEBUG
+        time_t now;
+        time(&now);
+
+        struct tm timeinfo;
+        localtime_r(&now, &timeinfo);
+
+        char strftime_buf[64];
+        strftime(strftime_buf, sizeof(strftime_buf),
+                 "%c", &timeinfo);
+
+        ESP_LOGI(TAG, "Current time: %s", strftime_buf);
+        #endif
+        synced = true;
+        return true;
+    }
+    else
+        return true;
+}
+
+esp_err_t pool_updates(http_buffer_t *buffer, void *callback)
+{
     // Setup https connection
+    char url_temp[512];
+
+    snprintf(url_temp, sizeof(url_temp),
+             BASE_URL "/getUpdates?offset=%lld&timeout=30",
+             (long long)update_id);
+
+
     esp_http_client_config_t pool_config = {
-        .url = (BASE_URL "/getUpdates?offset=%lld&timeout=30", update_id);
-        .cert_pem = TELEGRAM_ROOT_CERT,
+        .url = url_temp,
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .method = HTTP_METHOD_GET,
         .timeout_ms = 35000,
+        .event_handler = callback,
+        .user_data = buffer,
     };
     esp_http_client_handle_t client = esp_http_client_init(&pool_config);
-    esp_err_t err = esp_http_client_perform(client);
+
+    // Perform request
+    esp_err_t ret = esp_http_client_perform(client);
 
     #if DEBUG
-    if (err != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(err));
+    if (ret != ESP_OK)
+        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
     else
         ESP_LOGI(TAG, "Success - Status: %d",
              esp_http_client_get_status_code(client));
     #endif
-
-
-    // Read response
-    int content_len = esp_http_client_get_content_length(client);
-    char buffer[content_len + 1];
-    int read_len = esp_http_client_read(client, buffer, content_len);
-    buffer[read_len] = '\0';
-
-    response = buffer;
 
     // Close connection
     esp_http_client_cleanup(client);
     return ret;
 }
 
-reply_struct_t *parse(char* response)
+parse_t parse(char *response)
 {
     cJSON *root = cJSON_Parse(response);
 
     // Check for errors in response
+    parse_t ret = {
+        .reply = nullptr,
+        .count = 0
+    };
+
     if (root == nullptr)
     {
         #if DEBUG
         ESP_LOGE(TAG, "Failed - HTTP response - null");
         #endif
-        return ERROR;
+        return ret;
     }
 
-    cJSON *ok = cJSON_GetObjectItem(root, "ok");
+    const cJSON *ok = cJSON_GetObjectItem(root, "ok");
+    if (ok == nullptr)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "Failed - HTTP response - no 'ok'");
+        #endif
+        return ret;
+    }
+
     if (!cJSON_IsTrue(ok))
     {
         #if DEBUG
         ESP_LOGE(TAG, "Failed - HTTP response - ok: false");
         #endif
         cJSON_Delete(root);
-        return ERROR;
+        return ret;
     }
 
     // Parse
-    cJSON *result = cJSON_GetObjectItem(root, "result");
-    reply_struct_t ret[cJSON_GetArraySize(result)];
-    uint32_t counter = 0;
+    const cJSON *result = cJSON_GetObjectItem(root, "result");
+    if (result == nullptr)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "Failed - HTTP response - no 'result'");
+        #endif
+        return ret;
+    }
+
+    reply_struct_t reply_struct[cJSON_GetArraySize(result)];
+    ret.reply = reply_struct;
+
+    cJSON *update;
     cJSON_ArrayForEach(update, result)
     {
         // Update managed actions
-        update_id = cJSON_GetObjectItem(update, "update_id")->valueint;
+        update_id = cJSON_GetObjectItem(update, "update_id")->valueint +1;
+        #if DEBUG
+        ESP_LOGI(TAG, "New update id: %d", update_id);
+        #endif
 
         // Non authorized users
-        cJSON chat = cJSON_GetObjectItem(update, "chat");
-        if(cJSON_GetObjectItem(chat, "chat_id")->valueint != AUTHORIZED_CHAT_ID)
+        cJSON *message = cJSON_GetObjectItem(update, "message");
+        cJSON *chat = cJSON_GetObjectItem(message, "chat");
+        cJSON *chat_id = cJSON_GetObjectItem(chat, "id");
+        int chat_id_int = chat_id->valueint;
+
+        if(chat_id_int != AUTHORIZED_CHAT_ID_INT)
         {
             #if DEBUG
             ESP_LOGI(TAG, "Non authorized chat id");
             #endif
-            ret[counter].command = NO_COMMAND;
-            ret[counter].message_id = -1;
+            ret.reply[ret.count].command = NO_COMMAND;
+            ret.reply[ret.count].message_id = -1;
         }
 
         // Authorized users
         else
         {
             // Return requested action
-            char* text = cJSON_GetObjectItem(update, "text")->valuestring;
+            char* text = cJSON_GetObjectItem(message, "text")->valuestring;
 
             // Data (in case of a callback query)
-            cJSON* id_data = cJSON_GetObjectItem(update, "data");
-            char* data = id_data ? id_data->valuestring : nullptr;
+            cJSON *id_data = cJSON_GetObjectItem(message, "data");
+            char* data = id_data != nullptr ? id_data->valuestring : nullptr;
 
             // Message id (in case of a callback query)
-            cJSON* id_item = cJSON_GetObjectItem(update, "message_id");
-            int id = id_item ? id_item->valueint : -1;
-            ret[counter].message_id = id;
+            cJSON *id_item = cJSON_GetObjectItem(message, "message_id");
+            int64_t id = id_item ? id_item->valueint : -1;
+            ret.reply[ret.count].message_id = id;
 
             // Message data
-            if(text == "/start")
+            if(!strcmp(text, "/start"))
             {
-                ret[counter].command = START;
+                ret.reply[ret.count].command = START;
             }
             else
             {
-                switch (data)
-                {
-                    case "home":
-                        ret[counter].command = HOME;
-                        break;
-                    case "status":
-                        ret[counter].command = STATUS;
-                        break;
-                    case "wake":
-                        ret[counter].command = WAKE;
-                        break;
-                    case "poweroff_menu":
-                        ret[counter].command = POWEROFF_MENU;
-                        break;
-                    case "poweroff_now":
-                        ret[counter].command = POWEROFF_NOW;
-                        break;
-                    case "poweroff_30":
-                        ret[counter].command = POWEROFF_30;
-                        break;
-                    case "poweroff_60":
-                        ret[counter].command = POWEROFF_60;
-                        break;
-                    case "poweroff_120":
-                        ret[counter].command = POWEROFF_120;
-                        break;
-                    case "reboot_menu":
-                        ret[counter].command = REBOOT_MENU;
-                        break;
-                    case "reboot_now":
-                        ret[counter].command = REBOOT_NOW;
-                        break;
-                    case "reboot_30":
-                        ret[counter].command = REBOOT_30;
-                        break;
-                    case "reboot_60":
-                        ret[counter] = REBOOT_60;
-                        break;
-                    case "reboot_120":
-                        ret[counter].command = REBOOT_120;
-                        break;
-                    default:
-                        ret[counter].command = NO_COMMAND;
-                        break;
+                if(strcmp("home",data))
+                    ret.reply[ret.count].command = HOME;
+                else if(strcmp("status",data))
+                    ret.reply[ret.count].command = STATUS;
+                else if(strcmp("wake",data))
+                    ret.reply[ret.count].command = WAKE;
+                else if(strcmp("poweroff_menu",data))
+                    ret.reply[ret.count].command = POWEROFF_MENU;
+                else if(strcmp("poweroff_now",data))
+                    ret.reply[ret.count].command = POWEROFF_NOW;
+                else if(strcmp("poweroff_30",data))
+                    ret.reply[ret.count].command = POWEROFF_30;
+                else if(strcmp("poweroff_60",data))
+                    ret.reply[ret.count].command = POWEROFF_60;
+                else if(strcmp("poweroff_120",data))
+                    ret.reply[ret.count].command = POWEROFF_120;
+                else if(strcmp("reboot_menu",data))
+                    ret.reply[ret.count].command = REBOOT_MENU;
+                else if(strcmp("reboot_now",data))
+                    ret.reply[ret.count].command = REBOOT_NOW;
+                else if(strcmp("reboot_30",data))
+                    ret.reply[ret.count].command = REBOOT_30;
+                else if(strcmp("reboot_60",data))
+                    ret.reply[ret.count].command = REBOOT_60;
+                else if(strcmp("reboot_120",data))
+                    ret.reply[ret.count].command = REBOOT_120;
+                else
+                    ret.reply[ret.count].command = NO_COMMAND;
                 }
             }
+            ret.count++;
         }
-        counter++;
-    }
 
     cJSON_Delete(root);
     return ret;
 }
 
-void elaborate (reply_struct_t reply)
+esp_err_t elaborate (reply_struct_t reply)
 {
+    esp_err_t ret = ESP_OK;
+
     switch(reply.command)
     {
         case START:
-            send_message(MENU_START MENU_TEXT MENU_KEYBOARD MENU_END);
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - START");
+            #endif
+            ret = send_message(MENU_START MENU_TEXT MENU_KEYBOARD MENU_END);
             break;
         case HOME:
-            edit_message(MENU_START MENU_TEXT ("\"message_id\":\"%d:\",", reply.message_id) MENU_KEYBOARD MENU_END);
-            break;
-        case STATUS:
-            latest_status_message_id = reply.message_id;
-            esp_err_t err = ping_go();
+        {
             #if DEBUG
-            if(err != ESP_OK)
+            ESP_LOGI(TAG, "Elaborating - HOME");
+            #endif
+            const char* base_url = MENU_START MENU_TEXT "\"message_id\":\"%d:\"," MENU_KEYBOARD MENU_END;
+            uint32_t size = strlen(base_url)*sizeof(char)+sizeof(reply.message_id);
+            char url_temp[size];
+            snprintf(url_temp, size, base_url, reply.message_id);
+            ret = edit_message(url_temp);
+            break;
+        }
+        case STATUS:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - STATUS");
+            #endif
+            latest_status_message_id = reply.message_id;
+
+            ret = ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
+            #if DEBUG
+            if(ret != ESP_OK)
                 ESP_LOGE(TAG, "Failed - Couldn't start a new ping session");
             #endif
             break;
@@ -278,7 +462,7 @@ void elaborate (reply_struct_t reply)
             break;
         case POWEROFF_120:
             break;
-        case POWEROFF_MENU:
+        case REBOOT_MENU:
             break;
         case REBOOT_NOW:
             break;
@@ -292,49 +476,61 @@ void elaborate (reply_struct_t reply)
             break;
         case NO_COMMAND:
             break;
+        #if DEBUG
+        default:
+            ESP_LOGI(TAG, "Elaborating - UNKNOWN");
+            break;
+        #endif
     }
+    return ret;
 }
 
 esp_err_t send_message(const char *body)
 {
+    #if DEBUG
+    ESP_LOGI(TAG, "Sending message...");
+    #endif
     // Setup https connection
     const esp_http_client_config_t send_config = {
-        .url = BASE_URL BOT_TOKEN "/sendMessage",
-        .cert_pem = TELEGRAM_ROOT_CERT,
+        .url = BASE_URL "/sendMessage",
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .method = HTTP_METHOD_POST,
-        .timeout_ms = 10000,
+        .timeout_ms = 10000
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&send_config);
     esp_http_client_set_header(client, "Content-Type", "application/json");
 
     esp_http_client_set_post_field(client, body, strlen(body));
-
+    #if DEBUG
+    ESP_LOGI(TAG, "Sending body: %s", body);
+    #endif
     // Send message
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t ret = esp_http_client_perform(client);
 
     #if DEBUG
-    if (err != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(err));
-
-
-    if (esp_http_client_get_status_code(client) != 200)
+    if (ret != ESP_OK)
+        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
+    else if (esp_http_client_get_status_code(client) != 200)
         ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
     else
-        ESP_LOGI(TAG, "POST - Success");
+        ESP_LOGI(TAG, "Message sent!");
     #endif
 
     // Close connection
     esp_http_client_cleanup(client);
-    return err;
+    return ret;
 }
 
 esp_err_t edit_message(const char *body)
 {
     // Setup https connection
+    #if DEBUG
+    ESP_LOGI(TAG, "Editing message...");
+    #endif
     const esp_http_client_config_t send_config = {
         .url = BASE_URL BOT_TOKEN "/editMessageText",
-        .cert_pem = TELEGRAM_ROOT_CERT,
+        .cert_pem = (const char *)telegram_root_pem_start,
         .method = HTTP_METHOD_POST,
         .timeout_ms = 10000,
     };
@@ -345,11 +541,11 @@ esp_err_t edit_message(const char *body)
     esp_http_client_set_post_field(client, body, strlen(body));
 
     // Send message
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t ret = esp_http_client_perform(client);
 
     #if DEBUG
-    if (err != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(err));
+    if (ret != ESP_OK)
+        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
 
 
     if (esp_http_client_get_status_code(client) != 200)
@@ -360,16 +556,23 @@ esp_err_t edit_message(const char *body)
 
     // Close connection
     esp_http_client_cleanup(client);
-    return err;
+    #if DEBUG
+    ESP_LOGI(TAG, "Message edited!");
+    #endif
+    return ret;
 }
 
 esp_err_t telegram_answer_callback(const char *callback_query_id) {
     // TODO Recheck the code
     char post_data[256];
 
+    const char* base_url = BASE_URL "/answerCallbackQuery?callback_query_id=%s&text=OK";
+    uint32_t size = (strlen(base_url)+strlen(callback_query_id))*sizeof(char);
+    char url_temp[size];
+    snprintf(url_temp, size, base_url, update_id);
     esp_http_client_config_t config = {
-        .url = BASE_URL BOT_TOKEN "/answerCallbackQuery?callback_query_id=" callback_query_id "&text=OK",
-        .cert_pem = TELEGRAM_ROOT_CERT,
+        .url = url_temp,
+        .cert_pem = (const char*)telegram_root_pem_start,
         .method = HTTP_METHOD_POST,
         .timeout_ms = 5000,
     };
@@ -384,8 +587,10 @@ esp_err_t telegram_answer_callback(const char *callback_query_id) {
     return err;
 }
 
+
 void wakeOnLan(void)
 {
+    /*
     // Assemble 16 magic packets
     byte magicPacket[102];
     for (int i = 0; i < 6; i++)
@@ -400,10 +605,14 @@ void wakeOnLan(void)
     #if DEBUG
     ESP_LOGI(TAG, "Magic packet sent");
     #endif
+    */
 }
 
 void ping_callback(bool isRunning)
 {
+    #if DEBUG
+    ESP_LOGI(TAG, "Ping callback");
+    #endif
     ping_stop();
 
     if(latest_status_message_id == -1)
@@ -421,7 +630,20 @@ void ping_callback(bool isRunning)
     elaborate(home);
 
     // But edit the text to show the server status
-    const char* body = "{\"chat_id\": \"AUTHORIZED_CHAT_ID\", \"message_id\": %d, \"text\": \"Status:\" " (isRunning ? "Running":"Sleepy") "}";
-    edit_message(body);
+    const char* base_body = "{\"chat_id\": \"AUTHORIZED_CHAT_ID\", \"message_id\": %d, \"text\": \"Status: %s\"}";
+    uint32_t size = strlen(base_body)*sizeof(char)+sizeof(update_id);
+    char body_temp[size];
+    snprintf(body_temp, size, base_body, update_id, isRunning ? "Running":"Sleepy");
+    edit_message(body_temp);
 
+}
+
+void test_on_ping_success(void)
+{
+    ping_callback(true);
+}
+
+void test_on_ping_timeout(void)
+{
+    ping_callback(false);
 }
