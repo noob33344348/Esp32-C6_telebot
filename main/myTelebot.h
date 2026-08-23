@@ -101,7 +101,7 @@ esp_err_t send_message(const char *body);
 
 /**
  *
- * @brief Edit last sent message with a given 'body'.
+ * @brief Edit a message via a given 'body'.
  *
  *
  * @return
@@ -109,6 +109,17 @@ esp_err_t send_message(const char *body);
  *  - Other errors on failure. See esp_err.h for error codes.
  */
 esp_err_t edit_message(const char *body);
+
+/**
+ *
+ * @brief Respond to the callback query with a given 'body'.
+ *
+ *
+ * @return
+ *  - ESP_OK on success
+ *  - Other errors on failure. See esp_err.h for error codes.
+ */
+esp_err_t answer_callback(const char *body);
 
 /**
  *

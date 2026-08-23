@@ -86,7 +86,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 
 // Tracks which update has been recived
 static int64_t update_id = 0;
-static int64_t latest_status_message_id = -1;
+static char *edit_id = NULL;
 
 // MAIN
 void app_main(void)
@@ -166,7 +166,11 @@ void app_main(void)
             parse_t parse_out = parse(http_buffer.buffer);
 
             for(uint32_t i=0; i<parse_out.count; i++)
+            {
                 elaborate(parse_out.reply[i]);
+                if(parse_out.reply[i].message_id != NULL)
+                    free(parse_out.reply[i].message_id);
+            }
 
         }
         #if DEBUG
@@ -334,81 +338,109 @@ parse_t parse(char *response)
     cJSON *update;
     cJSON_ArrayForEach(update, result)
     {
+        ret.reply[ret.count].command = NO_COMMAND;
+        ret.reply[ret.count].message_id = NULL;
+
+        cJSON *callback = cJSON_GetObjectItem(update, "callback_query");
+
+        // Check user authorization
+        int chat_id_int;
+        cJSON *message;
+        if(callback == nullptr) // '/start' message
+        {
+
+            message = cJSON_GetObjectItem(update, "message");
+            cJSON *chat = cJSON_GetObjectItem(message, "chat");
+            cJSON *chat_id = cJSON_GetObjectItem(chat, "id");
+            chat_id_int = chat_id->valueint;
+        }
+        else // Callbacks
+        {
+            message = cJSON_GetObjectItem(callback, "message");
+            cJSON *chat = cJSON_GetObjectItem(message, "chat");
+            cJSON *chat_id = cJSON_GetObjectItem(chat, "id");
+            chat_id_int = chat_id->valueint;
+        }
+
+
         // Update managed actions
         update_id = cJSON_GetObjectItem(update, "update_id")->valueint +1;
         #if DEBUG
         ESP_LOGI(TAG, "New update id: %d", update_id);
         #endif
 
-        // Non authorized users
-        cJSON *message = cJSON_GetObjectItem(update, "message");
-        cJSON *chat = cJSON_GetObjectItem(message, "chat");
-        cJSON *chat_id = cJSON_GetObjectItem(chat, "id");
-        int chat_id_int = chat_id->valueint;
-
-        if(chat_id_int != AUTHORIZED_CHAT_ID_INT)
+        if(chat_id_int != AUTHORIZED_CHAT_ID_INT) // Unauthorized user
         {
             #if DEBUG
             ESP_LOGI(TAG, "Non authorized chat id");
             #endif
-            ret.reply[ret.count].command = NO_COMMAND;
-            ret.reply[ret.count].message_id = -1;
         }
-
-        // Authorized users
-        else
+        else // Authorized user
         {
             // Return requested action
             char* text = cJSON_GetObjectItem(message, "text")->valuestring;
 
-            // Data (in case of a callback query)
-            cJSON *id_data = cJSON_GetObjectItem(message, "data");
-            char* data = id_data != nullptr ? id_data->valuestring : nullptr;
 
-            // Message id (in case of a callback query)
-            cJSON *id_item = cJSON_GetObjectItem(message, "message_id");
-            int64_t id = id_item ? id_item->valueint : -1;
-            ret.reply[ret.count].message_id = id;
+            char *data = NULL;
+            char *id = NULL;
+            if(callback != nullptr)
+            {
+                // Data (in case of a callback query)
+                cJSON *id_data = cJSON_GetObjectItem(callback, "data");
+                data = id_data->valuestring;
+
+                // Message id (in case of a callback query)
+                cJSON *id_item = cJSON_GetObjectItem(callback, "id");
+                id = id_item->valuestring;
+                ret.reply[ret.count].message_id = malloc(strlen(id)*sizeof(id));
+                strcpy(ret.reply[ret.count].message_id, id);
+            }
 
             // Message data
             if(!strcmp(text, "/start"))
             {
                 ret.reply[ret.count].command = START;
             }
-            else
+            else if(callback != nullptr)
             {
-                if(strcmp("home",data))
+                if(!strcmp("home",data))
                     ret.reply[ret.count].command = HOME;
-                else if(strcmp("status",data))
+                else if(!strcmp("status",data))
                     ret.reply[ret.count].command = STATUS;
-                else if(strcmp("wake",data))
+                else if(!strcmp("wake",data))
                     ret.reply[ret.count].command = WAKE;
-                else if(strcmp("poweroff_menu",data))
+                else if(!strcmp("poweroff_menu",data))
                     ret.reply[ret.count].command = POWEROFF_MENU;
-                else if(strcmp("poweroff_now",data))
+                else if(!strcmp("poweroff_now",data))
                     ret.reply[ret.count].command = POWEROFF_NOW;
-                else if(strcmp("poweroff_30",data))
+                else if(!strcmp("poweroff_30",data))
                     ret.reply[ret.count].command = POWEROFF_30;
-                else if(strcmp("poweroff_60",data))
+                else if(!strcmp("poweroff_60",data))
                     ret.reply[ret.count].command = POWEROFF_60;
-                else if(strcmp("poweroff_120",data))
+                else if(!strcmp("poweroff_120",data))
                     ret.reply[ret.count].command = POWEROFF_120;
-                else if(strcmp("reboot_menu",data))
+                else if(!strcmp("reboot_menu",data))
                     ret.reply[ret.count].command = REBOOT_MENU;
-                else if(strcmp("reboot_now",data))
+                else if(!strcmp("reboot_now",data))
                     ret.reply[ret.count].command = REBOOT_NOW;
-                else if(strcmp("reboot_30",data))
+                else if(!strcmp("reboot_30",data))
                     ret.reply[ret.count].command = REBOOT_30;
-                else if(strcmp("reboot_60",data))
+                else if(!strcmp("reboot_60",data))
                     ret.reply[ret.count].command = REBOOT_60;
-                else if(strcmp("reboot_120",data))
+                else if(!strcmp("reboot_120",data))
                     ret.reply[ret.count].command = REBOOT_120;
                 else
                     ret.reply[ret.count].command = NO_COMMAND;
-                }
             }
-            ret.count++;
+            else
+            {
+                #if DEBUG
+                ESP_LOGE(TAG, "Parsing failed - unknown command");
+                #endif
+            }
         }
+        ret.count++;
+    }
 
     cJSON_Delete(root);
     return ret;
@@ -417,7 +449,7 @@ parse_t parse(char *response)
 esp_err_t elaborate (reply_struct_t reply)
 {
     esp_err_t ret = ESP_OK;
-
+    char body[128];
     switch(reply.command)
     {
         case START:
@@ -431,19 +463,20 @@ esp_err_t elaborate (reply_struct_t reply)
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - HOME");
             #endif
-            const char* base_url = MENU_START MENU_TEXT "\"message_id\":\"%d:\"," MENU_KEYBOARD MENU_END;
-            uint32_t size = strlen(base_url)*sizeof(char)+sizeof(reply.message_id);
-            char url_temp[size];
-            snprintf(url_temp, size, base_url, reply.message_id);
-            ret = edit_message(url_temp);
+
+            //TODO create body
+
+            //ret = answer_callback(body);
             break;
         }
         case STATUS:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - STATUS");
             #endif
-            latest_status_message_id = reply.message_id;
-
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Pinging...\"}", reply.message_id);
+            ret = answer_callback(body);
+            edit_id = reply.message_id;
             ret = ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
             #if DEBUG
             if(ret != ESP_OK)
@@ -451,30 +484,75 @@ esp_err_t elaborate (reply_struct_t reply)
             #endif
             break;
         case WAKE:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - WAKE");
+            #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Waking...\"}", reply.message_id);
+            #if DEBUG
+            ESP_LOGI(TAG, "Body: %s", body);
+            #endif
+            ret = answer_callback(body);
             break;
         case POWEROFF_MENU:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - POWEROFF MENU");
+            #endif
             break;
         case POWEROFF_NOW:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - POWEROFF NOW");
+            #endif
             break;
         case POWEROFF_30:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - POWEROFF 30");
+            #endif
             break;
         case POWEROFF_60:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - POWEROFF 60");
+            #endif
             break;
         case POWEROFF_120:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - POWEROFF 120");
+            #endif
             break;
         case REBOOT_MENU:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - REBOOT MENU");
+            #endif
             break;
         case REBOOT_NOW:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - REBOOT NOW");
+            #endif
             break;
         case REBOOT_30:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - REBOOT 30");
+            #endif
             break;
         case REBOOT_60:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - REBOOT 60");
+            #endif
             break;
         case REBOOT_120:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - REBOOT 120");
+            #endif
             break;
         case ERROR:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - ERROR");
+            #endif
             break;
         case NO_COMMAND:
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating - NO COMMAND");
+            #endif
             break;
         #if DEBUG
         default:
@@ -522,15 +600,15 @@ esp_err_t send_message(const char *body)
     return ret;
 }
 
-esp_err_t edit_message(const char *body)
+esp_err_t answer_callback(const char *body)
 {
     // Setup https connection
     #if DEBUG
-    ESP_LOGI(TAG, "Editing message...");
+    ESP_LOGI(TAG, "Answering callback...");
     #endif
     const esp_http_client_config_t send_config = {
-        .url = BASE_URL BOT_TOKEN "/editMessageText",
-        .cert_pem = (const char *)telegram_root_pem_start,
+        .url = BASE_URL "/answerCallbackQuery",
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .method = HTTP_METHOD_POST,
         .timeout_ms = 10000,
     };
@@ -551,42 +629,50 @@ esp_err_t edit_message(const char *body)
     if (esp_http_client_get_status_code(client) != 200)
         ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
     else
-        ESP_LOGI(TAG, "POST - Success");
+        ESP_LOGI(TAG, "Answer sent!");
     #endif
 
     // Close connection
     esp_http_client_cleanup(client);
-    #if DEBUG
-    ESP_LOGI(TAG, "Message edited!");
-    #endif
     return ret;
 }
 
-esp_err_t telegram_answer_callback(const char *callback_query_id) {
-    // TODO Recheck the code
-    char post_data[256];
-
-    const char* base_url = BASE_URL "/answerCallbackQuery?callback_query_id=%s&text=OK";
-    uint32_t size = (strlen(base_url)+strlen(callback_query_id))*sizeof(char);
-    char url_temp[size];
-    snprintf(url_temp, size, base_url, update_id);
-    esp_http_client_config_t config = {
-        .url = url_temp,
-        .cert_pem = (const char*)telegram_root_pem_start,
+esp_err_t edit_message(const char *body)
+{
+    // Setup https connection
+    #if DEBUG
+    ESP_LOGI(TAG, "Editing message...");
+    #endif
+    const esp_http_client_config_t send_config = {
+        .url = BASE_URL BOT_TOKEN "/editMessageText",
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .method = HTTP_METHOD_POST,
-        .timeout_ms = 5000,
+        .timeout_ms = 10000,
     };
 
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    esp_http_client_set_header(client, "Content-Type", "application/x-www-form-urlencoded");
-    esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    esp_err_t err = esp_http_client_perform(client);
+    esp_http_client_handle_t client = esp_http_client_init(&send_config);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+
+    esp_http_client_set_post_field(client, body, strlen(body));
+
+    // Send message
+    esp_err_t ret = esp_http_client_perform(client);
+
+    #if DEBUG
+    if (ret != ESP_OK)
+        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
 
 
+    if (esp_http_client_get_status_code(client) != 200)
+        ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
+    else
+        ESP_LOGI(TAG, "Message edited!");
+    #endif
+
+    // Close connection
     esp_http_client_cleanup(client);
-    return err;
+    return ret;
 }
-
 
 void wakeOnLan(void)
 {
@@ -608,33 +694,22 @@ void wakeOnLan(void)
     */
 }
 
-void ping_callback(bool isRunning)
+void ping_callback(bool isRunning) //TODO Manage errors
 {
     #if DEBUG
     ESP_LOGI(TAG, "Ping callback");
     #endif
     ping_stop();
 
-    if(latest_status_message_id == -1)
-    {
-        #if DEBUG
-        ESP_LOGE(TAG, "Inconsistent call to ping_callback with latest_status_message_id: -1. - Couldn't edit_the message");
-        #endif
-        return;
-    }
-
     // Go back to home message
-    reply_struct_t home;
-    home.command = HOME;
-    home.message_id = latest_status_message_id;
-    elaborate(home);
+    edit_message(MENU_START MENU_TEXT MENU_KEYBOARD MENU_END);
 
     // But edit the text to show the server status
-    const char* base_body = "{\"chat_id\": \"AUTHORIZED_CHAT_ID\", \"message_id\": %d, \"text\": \"Status: %s\"}";
-    uint32_t size = strlen(base_body)*sizeof(char)+sizeof(update_id);
-    char body_temp[size];
-    snprintf(body_temp, size, base_body, update_id, isRunning ? "Running":"Sleepy");
-    edit_message(body_temp);
+    char body[128];
+
+    snprintf(body, sizeof(body),
+             "{\"chat_id\":%s,\"message_id\":%s,\"text\":\"%s\"}", AUTHORIZED_CHAT_ID_STR, edit_id, isRunning ? "Running" : "Sleepy");
+    edit_message(body);
 
 }
 

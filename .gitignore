@@ -3,7 +3,9 @@ environment.h
 build/
 components/
 CMakeLists.txt
+idf_component.yml
 sdkconfig
 sdkconfig.old
 log.txt
 partitions.csv
+telegram_root.pem
