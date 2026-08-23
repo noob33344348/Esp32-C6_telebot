@@ -86,7 +86,9 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 
 // Tracks which update has been recived
 static int64_t update_id = 0;
-static char *edit_id = NULL;
+static int64_t edit_id = -1;
+// Protectes each http client
+static int8_t ping_status = -1;
 
 // MAIN
 void app_main(void)
@@ -168,8 +170,8 @@ void app_main(void)
             for(uint32_t i=0; i<parse_out.count; i++)
             {
                 elaborate(parse_out.reply[i]);
-                if(parse_out.reply[i].message_id != NULL)
-                    free(parse_out.reply[i].message_id);
+                if(parse_out.reply[i].callback_id != NULL)
+                    free(parse_out.reply[i].callback_id);
             }
 
         }
@@ -177,8 +179,13 @@ void app_main(void)
         else
             ESP_LOGW(TAG, "Failed to retrive messages: %d", esp_err_to_name(ret));
         #endif
-
         free(http_buffer.buffer);
+
+        if(ping_status > -1) // Elaborate ping
+        {
+            ping_callback();
+            ping_status = -1;
+        }
 
         // Wait
         #if DEBUG
@@ -259,7 +266,6 @@ esp_err_t pool_updates(http_buffer_t *buffer, void *callback)
              BASE_URL "/getUpdates?offset=%lld&timeout=30",
              (long long)update_id);
 
-
     esp_http_client_config_t pool_config = {
         .url = url_temp,
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -339,7 +345,9 @@ parse_t parse(char *response)
     cJSON_ArrayForEach(update, result)
     {
         ret.reply[ret.count].command = NO_COMMAND;
-        ret.reply[ret.count].message_id = NULL;
+        ret.reply[ret.count].callback_id = NULL;
+        ret.reply[ret.count].message_id = -1;
+
 
         cJSON *callback = cJSON_GetObjectItem(update, "callback_query");
 
@@ -365,6 +373,8 @@ parse_t parse(char *response)
 
         // Update managed actions
         update_id = cJSON_GetObjectItem(update, "update_id")->valueint +1;
+        cJSON *message_id = cJSON_GetObjectItem(message, "message_id");
+        ret.reply[ret.count].message_id = message_id->valueint;
         #if DEBUG
         ESP_LOGI(TAG, "New update id: %d", update_id);
         #endif
@@ -392,8 +402,8 @@ parse_t parse(char *response)
                 // Message id (in case of a callback query)
                 cJSON *id_item = cJSON_GetObjectItem(callback, "id");
                 id = id_item->valuestring;
-                ret.reply[ret.count].message_id = malloc(strlen(id)*sizeof(id));
-                strcpy(ret.reply[ret.count].message_id, id);
+                ret.reply[ret.count].callback_id = malloc(strlen(id)*sizeof(id));
+                strcpy(ret.reply[ret.count].callback_id, id);
             }
 
             // Message data
@@ -457,6 +467,7 @@ esp_err_t elaborate (reply_struct_t reply)
             ESP_LOGI(TAG, "Elaborating - START");
             #endif
             ret = send_message(MENU_START MENU_TEXT MENU_KEYBOARD MENU_END);
+            edit_id = reply.message_id+1;
             break;
         case HOME:
         {
@@ -473,12 +484,21 @@ esp_err_t elaborate (reply_struct_t reply)
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - STATUS");
             #endif
+            if(edit_id == -1)
+            {
+                #if DEBUG
+                ESP_LOGE(TAG, "Main message not found");
+                #endif
+                return ESP_FAIL;
+            }
+
             snprintf(body, sizeof(body),
-                     "{\"callback_query_id\":%s,\"text\":\"Pinging...\"}", reply.message_id);
+                     "{\"callback_query_id\":%s,\"text\":\"Pinging...\"}", reply.callback_id);
             ret = answer_callback(body);
-            edit_id = reply.message_id;
             ret = ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
+
             #if DEBUG
+            ESP_LOGI(TAG, "Ping go: %s", esp_err_to_name(ret));
             if(ret != ESP_OK)
                 ESP_LOGE(TAG, "Failed - Couldn't start a new ping session");
             #endif
@@ -488,7 +508,7 @@ esp_err_t elaborate (reply_struct_t reply)
             ESP_LOGI(TAG, "Elaborating - WAKE");
             #endif
             snprintf(body, sizeof(body),
-                     "{\"callback_query_id\":%s,\"text\":\"Waking...\"}", reply.message_id);
+                     "{\"callback_query_id\":%s,\"text\":\"Waking...\"}", reply.callback_id);
             #if DEBUG
             ESP_LOGI(TAG, "Body: %s", body);
             #endif
@@ -568,6 +588,7 @@ esp_err_t send_message(const char *body)
     #if DEBUG
     ESP_LOGI(TAG, "Sending message...");
     #endif
+
     // Setup https connection
     const esp_http_client_config_t send_config = {
         .url = BASE_URL "/sendMessage",
@@ -639,12 +660,17 @@ esp_err_t answer_callback(const char *body)
 
 esp_err_t edit_message(const char *body)
 {
+
+    #if DEBUG
+    ESP_LOGI(TAG, "Heap before: %d", esp_get_free_heap_size());
+    #endif
+
     // Setup https connection
     #if DEBUG
     ESP_LOGI(TAG, "Editing message...");
     #endif
     const esp_http_client_config_t send_config = {
-        .url = BASE_URL BOT_TOKEN "/editMessageText",
+        .url = BASE_URL "/editMessageText",
         .crt_bundle_attach = esp_crt_bundle_attach,
         .method = HTTP_METHOD_POST,
         .timeout_ms = 10000,
@@ -658,6 +684,9 @@ esp_err_t edit_message(const char *body)
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
 
+    #if DEBUG
+    ESP_LOGI(TAG, "Heap after: %d", esp_get_free_heap_size());
+    #endif
     #if DEBUG
     if (ret != ESP_OK)
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
@@ -694,31 +723,34 @@ void wakeOnLan(void)
     */
 }
 
-void ping_callback(bool isRunning) //TODO Manage errors
+void ping_callback() //TODO Manage errors
 {
     #if DEBUG
     ESP_LOGI(TAG, "Ping callback");
     #endif
     ping_stop();
 
-    // Go back to home message
-    edit_message(MENU_START MENU_TEXT MENU_KEYBOARD MENU_END);
-
-    // But edit the text to show the server status
-    char body[128];
-
+    char body[350];
     snprintf(body, sizeof(body),
-             "{\"chat_id\":%s,\"message_id\":%s,\"text\":\"%s\"}", AUTHORIZED_CHAT_ID_STR, edit_id, isRunning ? "Running" : "Sleepy");
+             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"%s\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, (ping_status == 0 ? "Running" : "Sleepy"), MENU_KEYBOARD);
+    #if DEBUG
+    ESP_LOGI(TAG, "Body: %s", body);
+    #endif
     edit_message(body);
-
 }
 
-void test_on_ping_success(void)
+void test_on_ping_success(void* args, void* cb_args)
 {
-    ping_callback(true);
+    #if DEBUG
+    ESP_LOGI(TAG, "Ping success");
+    #endif
+    ping_status = 0;
 }
 
-void test_on_ping_timeout(void)
+void test_on_ping_timeout(void* args, void* cb_args)
 {
-    ping_callback(false);
+    #if DEBUG
+    ESP_LOGI(TAG, "Ping timeout");
+    #endif
+    ping_status = 1;
 }

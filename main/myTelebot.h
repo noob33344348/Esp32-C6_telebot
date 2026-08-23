@@ -65,18 +65,20 @@ esp_err_t status(void);
 
 /**
  *
- * @brief Callback containg the status of the server
+ * @brief Callback that manages the message based on the status recived in 'ping_status'
  *
  */
-void ping_callback(bool isRunning);
+void ping_callback();
 
 /**
  *
- * @brief Callbacks for ping
+ * @brief Callbacks for my_ping
+ *
+ * IMPORTANT! This will modify 'ping_status' with 0 if ping success, 1 if timout.
  *
  */
-void test_on_ping_success(void);
-void test_on_ping_timeout(void);
+void test_on_ping_success(void* args, void* cb_args);
+void test_on_ping_timeout(void* args, void* cb_args);
 
 /**
  *
@@ -120,17 +122,6 @@ esp_err_t edit_message(const char *body);
  *  - Other errors on failure. See esp_err.h for error codes.
  */
 esp_err_t answer_callback(const char *body);
-
-/**
- *
- * @brief ???
- *
- *
- * @return
- *  - ESP_OK on success
- *  - Other errors on failure. See esp_err.h for error codes.
- */
-esp_err_t telegram_answer_callback(const char *callback_query_id);
 
 /**
  *

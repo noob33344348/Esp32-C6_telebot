@@ -25,7 +25,8 @@ typedef enum
 typedef struct
 {
     command_t command;
-    char *message_id;
+    char *callback_id;
+    int64_t message_id;
 } reply_struct_t;
 
 typedef struct
