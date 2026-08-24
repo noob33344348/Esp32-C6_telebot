@@ -82,13 +82,14 @@ void test_on_ping_timeout(void* args, void* cb_args);
 
 /**
  *
- * @brief Calls the APIs of the server
+ * @brief Calls the APIs of the server.
  *
  *
  * @return
- *  - See HTTP codes.
+ *  - ESP_OK on success
+ *  - Other errors on failure. See esp_err.h for error codes.
  */
-int localApiCall (void);
+esp_err_t send_command(const char *body);
 
 /**
  *

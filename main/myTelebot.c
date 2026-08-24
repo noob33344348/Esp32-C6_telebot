@@ -143,6 +143,14 @@ void app_main(void)
         if(!my_sync())
             break;
 
+        // Elaborate ping
+        if(ping_status > -1)
+        {
+            ping_callback();
+            ping_status = -1;
+        }
+
+
         // Look for updates
         #if DEBUG
         ESP_LOGI(TAG, "Looking for updates");
@@ -170,8 +178,17 @@ void app_main(void)
             for(uint32_t i=0; i<parse_out.count; i++)
             {
                 elaborate(parse_out.reply[i]);
+
                 if(parse_out.reply[i].callback_id != NULL)
+                {
+                    #if DEBUG
+                    ESP_LOGI(TAG, "Trying to free");
+                    #endif
                     free(parse_out.reply[i].callback_id);
+                    #if DEBUG
+                    ESP_LOGI(TAG, "Freed successefull!");
+                    #endif
+                }
             }
 
         }
@@ -180,12 +197,6 @@ void app_main(void)
             ESP_LOGW(TAG, "Failed to retrive messages: %d", esp_err_to_name(ret));
         #endif
         free(http_buffer.buffer);
-
-        if(ping_status > -1) // Elaborate ping
-        {
-            ping_callback();
-            ping_status = -1;
-        }
 
         // Wait
         #if DEBUG
@@ -459,7 +470,7 @@ parse_t parse(char *response)
 esp_err_t elaborate (reply_struct_t reply)
 {
     esp_err_t ret = ESP_OK;
-    char body[128];
+    char body[500];
     switch(reply.command)
     {
         case START:
@@ -467,7 +478,8 @@ esp_err_t elaborate (reply_struct_t reply)
             ESP_LOGI(TAG, "Elaborating - START");
             #endif
             ret = send_message(MENU_START MENU_TEXT MENU_KEYBOARD MENU_END);
-            edit_id = reply.message_id+1;
+            if(ret == ESP_OK)
+                edit_id = reply.message_id+1;
             break;
         case HOME:
         {
@@ -518,50 +530,123 @@ esp_err_t elaborate (reply_struct_t reply)
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - POWEROFF MENU");
             #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Thinking hard...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            snprintf(body, sizeof(body), "{\"message_id\":%lld," POWEROFF_MENU_BODY, edit_id);
+            #if DEBUG
+            ESP_LOGI(TAG, "Body: %s", body);
+            #endif
+            edit_message(body);
             break;
         case POWEROFF_NOW:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - POWEROFF NOW");
+            #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"0\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
             #endif
             break;
         case POWEROFF_30:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - POWEROFF 30");
             #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"30\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
+            #endif
             break;
         case POWEROFF_60:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - POWEROFF 60");
+            #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"60\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
+
             #endif
             break;
         case POWEROFF_120:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - POWEROFF 120");
             #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"120\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
+            #endif
             break;
         case REBOOT_MENU:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - REBOOT MENU");
             #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Thinking hard...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            snprintf(body, sizeof(body), "{\"message_id\":%lld," REBOOT_MENU_BODY, edit_id);
+            #if DEBUG
+            ESP_LOGI(TAG, "Body: %s", body);
+            #endif
+            edit_message(body);
             break;
         case REBOOT_NOW:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - REBOOT NOW");
+            #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"reboot\",\"minutes\":\"0\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
             #endif
             break;
         case REBOOT_30:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - REBOOT 30");
             #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"reboot\",\"minutes\":\"30\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
+            #endif
             break;
         case REBOOT_60:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - REBOOT 60");
             #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"reboot\",\"minutes\":\"60\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
+            #endif
             break;
         case REBOOT_120:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - REBOOT 120");
+            #endif
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            ret = send_command("{\"action\":\"reboot\",\"minutes\":\"120\"}");
+            #if DEBUG
+            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
             #endif
             break;
         case ERROR:
@@ -696,6 +781,44 @@ esp_err_t edit_message(const char *body)
         ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
     else
         ESP_LOGI(TAG, "Message edited!");
+    #endif
+
+    // Close connection
+    esp_http_client_cleanup(client);
+    return ret;
+}
+
+esp_err_t send_command(const char *body)
+{
+    #if DEBUG
+    ESP_LOGI(TAG, "Sending command...");
+    #endif
+
+    // Setup https connection
+    const esp_http_client_config_t send_config = {
+        .url = SERVER_API_URL,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 10000
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&send_config);
+    esp_http_client_set_header(client, "Authorization", "Bearer " API_TOKEN);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+
+    esp_http_client_set_post_field(client, body, strlen(body));
+    #if DEBUG
+    ESP_LOGI(TAG, "Sending body: %s", body);
+    #endif
+    // Send message
+    esp_err_t ret = esp_http_client_perform(client);
+
+    #if DEBUG
+    if (ret != ESP_OK)
+        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
+    else if (esp_http_client_get_status_code(client) != 200)
+        ESP_LOGW(TAG, "Failed to send command - Status: %d", esp_http_client_get_status_code(client));
+    else
+        ESP_LOGI(TAG, "Command sent!");
     #endif
 
     // Close connection

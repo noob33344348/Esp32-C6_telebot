@@ -1,5 +1,5 @@
-#ifndef COMMAND_H
-#define COMMAND_H
+#ifndef TYPES_H
+#define TYPES_H
 
 typedef enum
 {
