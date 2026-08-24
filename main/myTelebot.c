@@ -488,8 +488,19 @@ esp_err_t elaborate (reply_struct_t reply)
             #endif
 
             //TODO create body
-
-            //ret = answer_callback(body);
+            snprintf(body, sizeof(body),
+                     "{\"callback_query_id\":%s,\"text\":\"Going back...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            if(edit_id == -1)
+            {
+                #if DEBUG
+                ESP_LOGE(TAG, "Main message not found");
+                #endif
+                return ESP_FAIL;
+            }
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld," MENU_TEXT MENU_KEYBOARD MENU_END, edit_id);
+            edit_message(body);
             break;
         }
         case STATUS:
