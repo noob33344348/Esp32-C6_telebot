@@ -7,6 +7,7 @@
 #include "esp_sntp.h"
 #include "esp_netif_sntp.h"
 #include "esp_crt_bundle.h"
+#include <lwip/sockets.h> // Else use "esp_udp.h" ??
 
 // Custom wifi driver (station mode only)
 #include "wifi_sta.h"
@@ -532,10 +533,11 @@ esp_err_t elaborate (reply_struct_t reply)
             #endif
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Waking...\"}", reply.callback_id);
+            ret = answer_callback(body);
+            wakeOnLan();
             #if DEBUG
             ESP_LOGI(TAG, "Body: %s", body);
             #endif
-            ret = answer_callback(body);
             break;
         case POWEROFF_MENU:
             #if DEBUG
@@ -839,22 +841,38 @@ esp_err_t send_command(const char *body)
 
 void wakeOnLan(void)
 {
-    /*
-    // Assemble 16 magic packets
-    byte magicPacket[102];
-    for (int i = 0; i < 6; i++)
-        magicPacket[i] = 0xFF;
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "Failed - Coudn't setup socket");
+        #endif // DEBUG
+        return;
+    }
 
-    for (int i = 0; i < 16; i++)
-        memcpy(&magicPacket[6 + i * 6], MAC_ADDRESS, 6);
+    // Allow broadcast
+    int broadcast = 1;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
 
+    struct sockaddr_in dest_addr = {0};
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(7);
+    dest_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
 
-    // TODO Send packets
+    // Build WoL magic packet (6 x 0xFF + 16 x MAC address repeated)
+    uint8_t wol_packet[102];
+    memset(wol_packet, 0xFF, 6);
+    for (int i = 0; i < 16; i++) {
+        memcpy(&wol_packet[6 + i * 6], MAC_ADDRESS, 6);
+    }
 
+    sendto(sock, wol_packet, sizeof(wol_packet), 0,
+           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+
+    close(sock);
     #if DEBUG
     ESP_LOGI(TAG, "Magic packet sent");
     #endif
-    */
 }
 
 void ping_callback() //TODO Manage errors
