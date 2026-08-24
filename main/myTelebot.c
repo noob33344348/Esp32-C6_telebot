@@ -88,8 +88,9 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 // Tracks which update has been recived
 static int64_t update_id = 0;
 static int64_t edit_id = -1;
-// Protectes each http client
 static int8_t ping_status = -1;
+// How much time to spend polling (s)
+static uint8_t poll_timeout = MAX_POLL;
 
 // MAIN
 void app_main(void)
@@ -114,7 +115,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
         #endif
         ret = my_wifi_init();
-        for(volatile uint32_t i=0; i<100000; i++);
+        for(volatile uint32_t i=0; i<1000000000LL; i++);
 
     }
 
@@ -126,7 +127,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
         #endif
         ret = my_wifi_start();
-        for(volatile uint32_t i=0; i<100000; i++);
+        for(volatile uint32_t i=0; i<1000000000LL; i++);
 
     }
 
@@ -142,16 +143,17 @@ void app_main(void)
         if(!check_connection())
             break;
 
-        if(!my_sync())
-            break;
-
-        // Elaborate ping
-        if(ping_status > -1)
+        // Check if synced
+        for(uint8_t i = 0; i < MAX_SYNC_TRIES && !my_sync(); i++)
         {
-            ping_callback();
-            ping_status = -1;
+            if (i+1 == MAX_SYNC_TRIES)
+            {
+                #if DEBUG
+                ESP_LOGE(TAG, "CRITICAL! Failed to sync");
+                #endif // DEBUG
+                abort();
+            }
         }
-
 
         // Look for updates
         #if DEBUG
@@ -163,7 +165,7 @@ void app_main(void)
             .length = 0,
             .capacity = 0
         };
-        ret = pool_updates(&http_buffer, http_event_handler);
+        ret = poll_updates(&http_buffer, http_event_handler);
 
         #if DEBUG
         ESP_LOGI(TAG, "Response length: %d", http_buffer.length);
@@ -181,6 +183,7 @@ void app_main(void)
             {
                 elaborate(parse_out.reply[i]);
 
+                // Free callback_id
                 if(parse_out.reply[i].callback_id != NULL)
                 {
                     #if DEBUG
@@ -191,7 +194,18 @@ void app_main(void)
                     ESP_LOGI(TAG, "Freed successefull!");
                     #endif
                 }
+
+                // Reduce poll_timeout
+                if(poll_timeout > MIN_POLL)
+                {
+                    poll_timeout = MIN_POLL;
+                    #if DEBUG
+                    ESP_LOGI(TAG, "Reduced poll_timeout: %us", poll_timeout);
+                    #endif // DEBUG
+                }
             }
+
+            // Free reply
             if(parse_out.reply != NULL)
             {
                 #if DEBUG
@@ -203,19 +217,36 @@ void app_main(void)
                 #endif
             }
 
+            // Increase poll_timeout if no messages arrive
+            if(parse_out.count == 0 && poll_timeout < MAX_POLL)
+            {
+                poll_timeout *= 2;
+                if (poll_timeout > MAX_POLL)
+                    poll_timeout = MAX_POLL;
+                #if DEBUG
+                ESP_LOGI(TAG, "Increased poll_timeout: %us", poll_timeout);
+                #endif
+            }
+
         }
         #if DEBUG
         else
             ESP_LOGW(TAG, "Failed to retrive messages: %d", esp_err_to_name(ret));
         #endif
+
+        // Free http_buffer
         free(http_buffer.buffer);
 
-        // Wait
+        // Elaborate ping
+        if(ping_status > -1)
+        {
+            ping_callback();
+            ping_status = -1;
+        }
+
         #if DEBUG
         ESP_LOGI(TAG, "Heap end: %d", esp_get_free_heap_size());
-        ESP_LOGI(TAG, "Stop");
         #endif
-        for(volatile uint32_t i=0; i<1000000; i++);
     }
 }
 
@@ -247,17 +278,23 @@ bool check_connection(void)
 bool my_sync(void)
 {
     static bool synced = false;
+    static bool init = false;
     if(!synced)
     {
         #if DEBUG
         ESP_LOGE(TAG, "Trying to sync");
         #endif
 
-        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("time.cloudflare.com");
-        esp_netif_sntp_init(&config);
-        if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
+        if(!init)
+        {
+            esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("time.cloudflare.com");
+            esp_netif_sntp_init(&config);
+            init = true;
+        }
+
+        if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(20000)) != ESP_OK) {
             #if DEBUG
-            ESP_LOGE(TAG, "CRITICAL! Failed to update system time within 10s timeout");
+            ESP_LOGE(TAG, "Failed to update system time within 20s timeout");
             #endif
             return false;
         }
@@ -281,20 +318,20 @@ bool my_sync(void)
         return true;
 }
 
-esp_err_t pool_updates(http_buffer_t *buffer, void *callback)
+esp_err_t poll_updates(http_buffer_t *buffer, void *callback)
 {
     // Setup https connection
     char url_temp[512];
 
     snprintf(url_temp, sizeof(url_temp),
-             BASE_URL "/getUpdates?offset=%lld&timeout=30",
-             (long long)update_id);
+             BASE_URL "/getUpdates?offset=%lld&timeout=%d",
+             (long long)update_id, poll_timeout);
 
     esp_http_client_config_t pool_config = {
         .url = url_temp,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .method = HTTP_METHOD_GET,
-        .timeout_ms = 35000,
+        .timeout_ms = (poll_timeout + 3) * 1000,
         .event_handler = callback,
         .user_data = buffer,
     };

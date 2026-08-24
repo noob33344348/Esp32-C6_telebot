@@ -12,7 +12,7 @@
  *  - ESP_OK on success
  *  - Other errors on failure. See esp_err.h for error codes.
  */
-esp_err_t pool_updates(http_buffer_t *buffer, void* callback);
+esp_err_t poll_updates(http_buffer_t *buffer, void* callback);
 
 /**
  *
