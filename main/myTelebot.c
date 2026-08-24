@@ -7,7 +7,7 @@
 #include "esp_sntp.h"
 #include "esp_netif_sntp.h"
 #include "esp_crt_bundle.h"
-#include <lwip/sockets.h> // Else use "esp_udp.h" ??
+#include <lwip/sockets.h>
 
 // Custom wifi driver (station mode only)
 #include "wifi_sta.h"
@@ -135,6 +135,7 @@ void app_main(void)
     {
         #if DEBUG
         ESP_LOGI(TAG, "Entered main task");
+        ESP_LOGI(TAG, "Heap start: %d", esp_get_free_heap_size());
         #endif
 
         // Check if connected and synced
@@ -183,13 +184,23 @@ void app_main(void)
                 if(parse_out.reply[i].callback_id != NULL)
                 {
                     #if DEBUG
-                    ESP_LOGI(TAG, "Trying to free");
+                    ESP_LOGI(TAG, "Trying to free callback_id");
                     #endif
                     free(parse_out.reply[i].callback_id);
                     #if DEBUG
                     ESP_LOGI(TAG, "Freed successefull!");
                     #endif
                 }
+            }
+            if(parse_out.reply != NULL)
+            {
+                #if DEBUG
+                ESP_LOGI(TAG, "Trying to free parse_out.reply");
+                #endif
+                free(parse_out.reply);
+                #if DEBUG
+                ESP_LOGI(TAG, "Freed successefull!");
+                #endif
             }
 
         }
@@ -201,6 +212,7 @@ void app_main(void)
 
         // Wait
         #if DEBUG
+        ESP_LOGI(TAG, "Heap end: %d", esp_get_free_heap_size());
         ESP_LOGI(TAG, "Stop");
         #endif
         for(volatile uint32_t i=0; i<1000000; i++);
@@ -310,11 +322,11 @@ parse_t parse(char *response)
 
     // Check for errors in response
     parse_t ret = {
-        .reply = nullptr,
+        .reply = NULL,
         .count = 0
     };
 
-    if (root == nullptr)
+    if (root == NULL)
     {
         #if DEBUG
         ESP_LOGE(TAG, "Failed - HTTP response - null");
@@ -323,7 +335,7 @@ parse_t parse(char *response)
     }
 
     const cJSON *ok = cJSON_GetObjectItem(root, "ok");
-    if (ok == nullptr)
+    if (ok == NULL)
     {
         #if DEBUG
         ESP_LOGE(TAG, "Failed - HTTP response - no 'ok'");
@@ -342,7 +354,7 @@ parse_t parse(char *response)
 
     // Parse
     const cJSON *result = cJSON_GetObjectItem(root, "result");
-    if (result == nullptr)
+    if (result == NULL)
     {
         #if DEBUG
         ESP_LOGE(TAG, "Failed - HTTP response - no 'result'");
@@ -350,8 +362,7 @@ parse_t parse(char *response)
         return ret;
     }
 
-    reply_struct_t reply_struct[cJSON_GetArraySize(result)];
-    ret.reply = reply_struct;
+    ret.reply =malloc(cJSON_GetArraySize(result) * sizeof(reply_struct_t));
 
     cJSON *update;
     cJSON_ArrayForEach(update, result)
@@ -360,13 +371,12 @@ parse_t parse(char *response)
         ret.reply[ret.count].callback_id = NULL;
         ret.reply[ret.count].message_id = -1;
 
-
         cJSON *callback = cJSON_GetObjectItem(update, "callback_query");
 
         // Check user authorization
         int chat_id_int;
         cJSON *message;
-        if(callback == nullptr) // '/start' message
+        if(callback == NULL) // '/start' message
         {
 
             message = cJSON_GetObjectItem(update, "message");
@@ -381,7 +391,6 @@ parse_t parse(char *response)
             cJSON *chat_id = cJSON_GetObjectItem(chat, "id");
             chat_id_int = chat_id->valueint;
         }
-
 
         // Update managed actions
         update_id = cJSON_GetObjectItem(update, "update_id")->valueint +1;
@@ -405,7 +414,7 @@ parse_t parse(char *response)
 
             char *data = NULL;
             char *id = NULL;
-            if(callback != nullptr)
+            if(callback != NULL)
             {
                 // Data (in case of a callback query)
                 cJSON *id_data = cJSON_GetObjectItem(callback, "data");
@@ -414,7 +423,19 @@ parse_t parse(char *response)
                 // Message id (in case of a callback query)
                 cJSON *id_item = cJSON_GetObjectItem(callback, "id");
                 id = id_item->valuestring;
-                ret.reply[ret.count].callback_id = malloc(strlen(id)*sizeof(id));
+
+                ret.reply[ret.count].callback_id = malloc(strlen(id)+1);
+                if(ret.reply[ret.count].callback_id == NULL)
+                {
+                    #if DEBUG
+                    ESP_LOGE(TAG, "Failed - Couldn't malloc for callback_id");
+                    ESP_LOGI(TAG, "Heap: %d", esp_get_free_heap_size());
+                    #endif // DEBUG
+
+                    // Skip iteration
+                    ret.reply[ret.count].callback_id = NULL;
+                    continue;
+                }
                 strcpy(ret.reply[ret.count].callback_id, id);
             }
 
@@ -423,7 +444,7 @@ parse_t parse(char *response)
             {
                 ret.reply[ret.count].command = START;
             }
-            else if(callback != nullptr)
+            else if(callback != NULL)
             {
                 if(!strcmp("home",data))
                     ret.reply[ret.count].command = HOME;
@@ -882,7 +903,7 @@ void ping_callback() //TODO Manage errors
     #endif
     ping_stop();
 
-    char body[350];
+    char body[800];
     snprintf(body, sizeof(body),
              "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"%s\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, (ping_status == 0 ? "Running" : "Sleepy"), MENU_KEYBOARD);
     #if DEBUG
