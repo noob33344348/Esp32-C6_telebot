@@ -8,6 +8,8 @@
 #include "esp_netif_sntp.h"
 #include "esp_crt_bundle.h"
 #include <lwip/sockets.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 // Custom wifi driver (station mode only)
 #include "wifi_sta.h"
@@ -88,7 +90,9 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 // Tracks which update has been recived
 static int64_t update_id = 0;
 static int64_t edit_id = -1;
-static int8_t ping_status = -1;
+static int8_t ping_status = -1; // -1: no ping, 0: server on, 1: server off
+// If enabled abort program if ping failes
+static bool ping_abort = false;
 // How much time to spend polling (s)
 static uint8_t poll_timeout = MAX_POLL;
 
@@ -109,26 +113,40 @@ void app_main(void)
 
     // Wifi connection
     ret = my_wifi_init();
-    while(ret != ESP_OK)
+    for(uint8_t i = 0; i < MAX_WIFI_TRIES && ret != ESP_OK; i++)
     {
         #if DEBUG
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
         #endif
-        ret = my_wifi_init();
-        for(volatile uint32_t i=0; i<1000000000LL; i++);
 
+        if (i+1 == MAX_WIFI_TRIES)
+        {
+            #if DEBUG
+            ESP_LOGE(TAG, "CRITICAL! Failed to wifi_init");
+            #endif // DEBUG
+            abort();
+        }
+
+        ret = my_wifi_init();
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 
     ret = my_wifi_start();
-    while(ret != ESP_OK)
+    for(uint8_t i = 0; i < MAX_WIFI_TRIES && ret != ESP_OK; i++)
     {
-
         #if DEBUG
         ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
         #endif
-        ret = my_wifi_start();
-        for(volatile uint32_t i=0; i<1000000000LL; i++);
+        if (i+1 == MAX_WIFI_TRIES)
+        {
+            #if DEBUG
+            ESP_LOGE(TAG, "CRITICAL! Failed to wifi_start");
+            #endif // DEBUG
+            abort();
+        }
 
+        ret = my_wifi_start();
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 
     // Main loop
@@ -139,9 +157,33 @@ void app_main(void)
         ESP_LOGI(TAG, "Heap start: %d", esp_get_free_heap_size());
         #endif
 
-        // Check if connected and synced
-        if(!check_connection())
-            break;
+        // Check if connected
+        for(uint8_t i = 0; i < MAX_WIFI_TRIES && !my_wifi_status(); i++)
+        {
+            if (i+1 == MAX_WIFI_TRIES)
+            {
+                #if DEBUG
+                ESP_LOGE(TAG, "CRITICAL! Failed to connect - %s", esp_err_to_name(ret));
+                #endif // DEBUG
+                abort();
+            }
+
+            ret = my_wifi_reconnect();
+            if(ret == ESP_OK)
+            {
+                #if DEBUG
+                ESP_LOGI(TAG, "Reconnecting...");
+                #endif
+            }
+            else
+            {
+                #if DEBUG
+                ESP_LOGE(TAG, "Failed reconnection instance...");
+                #endif
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
 
         // Check if synced
         for(uint8_t i = 0; i < MAX_SYNC_TRIES && !my_sync(); i++)
@@ -167,14 +209,10 @@ void app_main(void)
         };
         ret = poll_updates(&http_buffer, http_event_handler);
 
-        #if DEBUG
-        ESP_LOGI(TAG, "Response length: %d", http_buffer.length);
-        #endif
-
-
         if(ret == ESP_OK) // Elaborate response
         {
             #if DEBUG
+            ESP_LOGI(TAG, "Response length: %d", http_buffer.length);
             ESP_LOGI(TAG, "Parsing");
             #endif
             parse_t parse_out = parse(http_buffer.buffer);
@@ -229,13 +267,10 @@ void app_main(void)
             }
 
         }
-        #if DEBUG
-        else
-            ESP_LOGW(TAG, "Failed to retrive messages: %d", esp_err_to_name(ret));
-        #endif
 
         // Free http_buffer
-        free(http_buffer.buffer);
+        if(http_buffer.buffer != NULL)
+            free(http_buffer.buffer);
 
         // Elaborate ping
         if(ping_status > -1)
@@ -251,30 +286,6 @@ void app_main(void)
 }
 
 // IMPLEMENTATIONS
-bool check_connection(void)
-{
-    // Try to reconnect until it works
-    esp_err_t err;
-    uint32_t limit;
-    for(limit = 100000; limit>0 && my_wifi_status() == false; limit--)
-    {
-        err = my_wifi_reconnect();
-        while(err != ESP_OK)
-        {
-            #if DEBUG
-            ESP_LOGI(TAG, "Reconnecting...");
-            #endif
-            for(volatile uint32_t i=0; i<1000000; i++);
-            err = my_wifi_reconnect();
-        }
-    }
-    #if DEBUG
-    if(limit == 0)
-        ESP_LOGE(TAG, "Failed to connect - %s", esp_err_to_name(err));
-    #endif
-    return my_wifi_status();
-}
-
 bool my_sync(void)
 {
     static bool synced = false;
@@ -339,14 +350,9 @@ esp_err_t poll_updates(http_buffer_t *buffer, void *callback)
 
     // Perform request
     esp_err_t ret = esp_http_client_perform(client);
-
-    #if DEBUG
-    if (ret != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
-    else
-        ESP_LOGI(TAG, "Success - Status: %d",
-             esp_http_client_get_status_code(client));
-    #endif
+    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+        ret = ESP_FAIL;
+    manage_error_telegram_api(ret);
 
     // Close connection
     esp_http_client_cleanup(client);
@@ -355,14 +361,13 @@ esp_err_t poll_updates(http_buffer_t *buffer, void *callback)
 
 parse_t parse(char *response)
 {
-    cJSON *root = cJSON_Parse(response);
-
-    // Check for errors in response
     parse_t ret = {
         .reply = NULL,
         .count = 0
     };
+    cJSON *root = cJSON_Parse(response);
 
+    // Check for errors in response
     if (root == NULL)
     {
         #if DEBUG
@@ -576,14 +581,8 @@ esp_err_t elaborate (reply_struct_t reply)
 
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Pinging...\"}", reply.callback_id);
-            ret = answer_callback(body);
-            ret = ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
-
-            #if DEBUG
-            ESP_LOGI(TAG, "Ping go: %s", esp_err_to_name(ret));
-            if(ret != ESP_OK)
-                ESP_LOGE(TAG, "Failed - Couldn't start a new ping session");
-            #endif
+            (void)answer_callback(body);
+            (void)ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
             break;
         case WAKE:
             #if DEBUG
@@ -593,9 +592,6 @@ esp_err_t elaborate (reply_struct_t reply)
                      "{\"callback_query_id\":%s,\"text\":\"Waking...\"}", reply.callback_id);
             ret = answer_callback(body);
             wakeOnLan();
-            #if DEBUG
-            ESP_LOGI(TAG, "Body: %s", body);
-            #endif
             break;
         case POWEROFF_MENU:
             #if DEBUG
@@ -762,15 +758,9 @@ esp_err_t send_message(const char *body)
     #endif
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
-
-    #if DEBUG
-    if (ret != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
-    else if (esp_http_client_get_status_code(client) != 200)
-        ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
-    else
-        ESP_LOGI(TAG, "Message sent!");
-    #endif
+    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+        ret = ESP_FAIL;
+    manage_error_telegram_api(ret);
 
     // Close connection
     esp_http_client_cleanup(client);
@@ -797,17 +787,9 @@ esp_err_t answer_callback(const char *body)
 
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
-
-    #if DEBUG
-    if (ret != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
-
-
-    if (esp_http_client_get_status_code(client) != 200)
-        ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
-    else
-        ESP_LOGI(TAG, "Answer sent!");
-    #endif
+    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+        ret = ESP_FAIL;
+    manage_error_telegram_api(ret);
 
     // Close connection
     esp_http_client_cleanup(client);
@@ -816,11 +798,6 @@ esp_err_t answer_callback(const char *body)
 
 esp_err_t edit_message(const char *body)
 {
-
-    #if DEBUG
-    ESP_LOGI(TAG, "Heap before: %d", esp_get_free_heap_size());
-    #endif
-
     // Setup https connection
     #if DEBUG
     ESP_LOGI(TAG, "Editing message...");
@@ -840,19 +817,6 @@ esp_err_t edit_message(const char *body)
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
 
-    #if DEBUG
-    ESP_LOGI(TAG, "Heap after: %d", esp_get_free_heap_size());
-    #endif
-    #if DEBUG
-    if (ret != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
-
-
-    if (esp_http_client_get_status_code(client) != 200)
-        ESP_LOGW(TAG, "Failed to send message - Status: %d", esp_http_client_get_status_code(client));
-    else
-        ESP_LOGI(TAG, "Message edited!");
-    #endif
 
     // Close connection
     esp_http_client_cleanup(client);
@@ -882,16 +846,9 @@ esp_err_t send_command(const char *body)
     #endif
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
-
-    #if DEBUG
-    if (ret != ESP_OK)
-        ESP_LOGE(TAG, "Failed: %s", esp_err_to_name(ret));
-    else if (esp_http_client_get_status_code(client) != 200)
-        ESP_LOGW(TAG, "Failed to send command - Status: %d", esp_http_client_get_status_code(client));
-    else
-        ESP_LOGI(TAG, "Command sent!");
-    #endif
-
+    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+        ret = ESP_FAIL;
+    manage_error_server_api(ret);
     // Close connection
     esp_http_client_cleanup(client);
     return ret;
@@ -917,7 +874,7 @@ void wakeOnLan(void)
     dest_addr.sin_port = htons(7);
     dest_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
 
-    // Build WoL magic packet (6 x 0xFF + 16 x MAC address repeated)
+    // Build WoL magic packet
     uint8_t wol_packet[102];
     memset(wol_packet, 0xFF, 6);
     for (int i = 0; i < 16; i++) {
@@ -933,16 +890,44 @@ void wakeOnLan(void)
     #endif
 }
 
-void ping_callback() //TODO Manage errors
+void ping_callback()
 {
     #if DEBUG
     ESP_LOGI(TAG, "Ping callback");
     #endif
     ping_stop();
-
     char body[800];
-    snprintf(body, sizeof(body),
+
+    // Check if abort is required
+    if(ping_abort && ping_status == 0)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "CRITICAL! Can't reach server, but it is running; aborting...");
+        #endif // DEBUG
+        snprintf(body, sizeof(body),
+             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"Server can't be reached.\nBut server running.\nABORTING...\"}", AUTHORIZED_CHAT_ID_STR, edit_id);
+        edit_message(body);
+        abort();
+    }
+    ping_abort = false;
+
+    if(ping_abort && ping_status == 1)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "Can't reach server because it is NOT running; NOT aborting...");
+        #endif // DEBUG
+
+        snprintf(body, sizeof(body),
+             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"Server can't be reached.\nServer not running...\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, MENU_KEYBOARD);
+
+    }
+    else
+    {
+        snprintf(body, sizeof(body),
              "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"%s\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, (ping_status == 0 ? "Running" : "Sleepy"), MENU_KEYBOARD);
+
+    }
+
     #if DEBUG
     ESP_LOGI(TAG, "Body: %s", body);
     #endif
@@ -963,4 +948,62 @@ void test_on_ping_timeout(void* args, void* cb_args)
     ESP_LOGI(TAG, "Ping timeout");
     #endif
     ping_status = 1;
+}
+
+void manage_error_telegram_api(esp_err_t err)
+{
+    static uint8_t failed_telegram_api = 0;
+    if(err == ESP_OK)
+    {
+        #if DEBUG
+        ESP_LOGI(TAG, "Success - Telegram API call");
+        #endif // DEBUG
+        failed_telegram_api = 0;
+        return;
+    }
+
+    #if DEBUG
+    ESP_LOGE(TAG, "Failure: %s", esp_err_to_name(err));
+    #endif // DEBUG
+
+    failed_telegram_api++;
+
+    if(failed_telegram_api == MAX_TELEGRAM_API_FAILURES)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "CRITICAL! Too many telegram API failures, aborting...");
+        #endif // DEBUG
+        abort();
+    }
+}
+void manage_error_server_api(esp_err_t err)
+{
+    static uint8_t failed_server_api = 0;
+    if(err == ESP_OK)
+    {
+        #if DEBUG
+        ESP_LOGI(TAG, "Success - server API call");
+        #endif // DEBUG
+        failed_server_api = 0;
+        return;
+    }
+
+    #if DEBUG
+    ESP_LOGE(TAG, "Failure: %s", esp_err_to_name(err));
+    #endif // DEBUG
+
+    failed_server_api++;
+
+    if(failed_server_api == MAX_SERVER_API_FAILURES)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "CRITICAL! Too many failures, checking server status...");
+        #endif // DEBUG
+        char body[200];
+        snprintf(body, sizeof(body),
+                 "{\"message_id\":%lld, \"text\": \"Coudn't contact server. \nTrying to ping...\", \"chat_id\": %s}", edit_id, AUTHORIZED_CHAT_ID_STR);
+        edit_message(body);
+        (void)ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
+        ping_abort = true;
+    }
 }

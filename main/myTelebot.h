@@ -136,12 +136,23 @@ bool my_sync(void);
 
 /**
  *
- * @brief Check WiFi connection, if disconnected it tries to reconnect
+ * @brief Manage the errors of the functions calling telegram bot APIs.
  *
  *
- * @return
- *  - true if connected/reconnected, false otherwise.
+ * Note: It MUST be called after a telegram API call.
+ *
+ * IMPORTANT! This function may 'abort()' if the error is critical.
  */
-bool check_connection(void);
+void manage_error_telegram_api(esp_err_t err);
 
+/**
+ *
+ * @brief Manage the errors of the functions calling the server APIs.
+ *
+ *
+ * Note: It MUST be called after a server API call.
+ *
+ * IMPORTANT! This function may 'abort()' if the error is critical.
+ */
+void manage_error_server_api(esp_err_t err);
 #endif
