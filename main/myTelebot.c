@@ -283,6 +283,9 @@ void app_main(void)
         // Elaborate ping
         if(ping_status > -1)
         {
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating ping");
+            #endif // DEBUG
             ret = ping_callback();
             #if DEBUG
             ESP_LOGI(TAG, "Ping callback status: %s", esp_err_to_name(ret));
@@ -546,7 +549,7 @@ parse_t parse(char *response)
 esp_err_t elaborate (reply_struct_t reply)
 {
     esp_err_t ret = ESP_OK;
-    char body[500];
+    char body[800];
     switch(reply.command)
     {
         case START:
@@ -593,6 +596,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = wake_on_lan();
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\": \"Waking.\nPlease wait a few minutes...\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case POWEROFF_MENU:
             #if DEBUG
@@ -616,6 +624,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"0\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Powering off\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case POWEROFF_30:
             #if DEBUG
@@ -627,6 +640,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"30\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Powering off in 30\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case POWEROFF_60:
             #if DEBUG
@@ -638,6 +656,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"60\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Powering off in 60\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case POWEROFF_120:
             #if DEBUG
@@ -649,6 +672,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"120\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Powering off in 120\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case REBOOT_MENU:
             #if DEBUG
@@ -672,6 +700,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"0\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Rebooting\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case REBOOT_30:
             #if DEBUG
@@ -683,6 +716,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"30\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Rebooting in 30\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case REBOOT_60:
             #if DEBUG
@@ -694,6 +732,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"60\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Rebooting in 60\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case REBOOT_120:
             #if DEBUG
@@ -705,6 +748,11 @@ esp_err_t elaborate (reply_struct_t reply)
             if(ret != ESP_OK)
                 return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"120\"}");
+            if(ret != ESP_OK)
+                return ret;
+            snprintf(body, sizeof(body),
+                     MENU_START "\"message_id\":%lld, \"text\":\"Rebooting in 120\", " MENU_KEYBOARD MENU_END, edit_id);
+            ret = edit_message(body);
             break;
         case ERROR:
             #if DEBUG
@@ -849,9 +897,9 @@ esp_err_t send_command(const char *body)
     esp_err_t ret = esp_http_client_perform(client);
     if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
         ret = ESP_FAIL;
-    manage_error_server_api(ret);
     // Close connection
     esp_http_client_cleanup(client);
+    manage_error_server_api(ret);
     return ret;
 }
 
@@ -996,7 +1044,7 @@ void manage_error_server_api(esp_err_t err)
     #if DEBUG
     ESP_LOGE(TAG, "Failure: %s", esp_err_to_name(err));
     #endif // DEBUG
-
+    char body[500];
     failed_server_api++;
 
     if(failed_server_api == MAX_SERVER_API_FAILURES)
@@ -1004,11 +1052,19 @@ void manage_error_server_api(esp_err_t err)
         #if DEBUG
         ESP_LOGE(TAG, "CRITICAL! Too many failures, checking server status...");
         #endif // DEBUG
-        char body[200];
+
         snprintf(body, sizeof(body),
                  "{\"message_id\":%lld, \"text\": \"Coudn't contact server. \nTrying to ping...\", \"chat_id\": %s}", edit_id, AUTHORIZED_CHAT_ID_STR);
         edit_message(body);
         (void)ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
         ping_abort = true;
     }
+    else
+    {
+        snprintf(body, sizeof(body),
+                 MENU_START "\"message_id\":%lld, \"text\":\"Command failed.\", " MENU_KEYBOARD MENU_END, edit_id);
+        edit_message(body);
+    }
+
+
 }
