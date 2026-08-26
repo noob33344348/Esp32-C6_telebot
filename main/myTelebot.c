@@ -219,7 +219,10 @@ void app_main(void)
 
             for(uint32_t i=0; i<parse_out.count; i++)
             {
-                elaborate(parse_out.reply[i]);
+                ret = elaborate(parse_out.reply[i]);
+                #if DEBUG
+                ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
+                #endif // DEBUG
 
                 // Free callback_id
                 if(parse_out.reply[i].callback_id != NULL)
@@ -555,33 +558,20 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Going back...\"}", reply.callback_id);
             ret = answer_callback(body);
-            if(edit_id == -1)
-            {
-                #if DEBUG
-                ESP_LOGE(TAG, "Main message not found");
-                #endif
-                return ESP_FAIL;
-            }
+            if(ret != ESP_OK)
+                return ret;
             snprintf(body, sizeof(body),
                      MENU_START "\"message_id\":%lld," MENU_TEXT MENU_KEYBOARD MENU_END, edit_id);
-            edit_message(body);
+            ret = edit_message(body);
             break;
         }
         case STATUS:
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - STATUS");
             #endif
-            if(edit_id == -1)
-            {
-                #if DEBUG
-                ESP_LOGE(TAG, "Main message not found");
-                #endif
-                return ESP_FAIL;
-            }
-
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Pinging...\"}", reply.callback_id);
-            (void)answer_callback(body);
+            ret = answer_callback(body);
             (void)ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
             break;
         case WAKE:
@@ -600,11 +590,10 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Thinking hard...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             snprintf(body, sizeof(body), "{\"message_id\":%lld," POWEROFF_MENU_BODY, edit_id);
-            #if DEBUG
-            ESP_LOGI(TAG, "Body: %s", body);
-            #endif
-            edit_message(body);
+            ret = edit_message(body);
             break;
         case POWEROFF_NOW:
             #if DEBUG
@@ -613,10 +602,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"0\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-            #endif
             break;
         case POWEROFF_30:
             #if DEBUG
@@ -625,10 +613,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"30\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-            #endif
             break;
         case POWEROFF_60:
             #if DEBUG
@@ -637,11 +624,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"60\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-
-            #endif
             break;
         case POWEROFF_120:
             #if DEBUG
@@ -650,10 +635,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"poweroff\",\"minutes\":\"120\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-            #endif
             break;
         case REBOOT_MENU:
             #if DEBUG
@@ -662,11 +646,10 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Thinking hard...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             snprintf(body, sizeof(body), "{\"message_id\":%lld," REBOOT_MENU_BODY, edit_id);
-            #if DEBUG
-            ESP_LOGI(TAG, "Body: %s", body);
-            #endif
-            edit_message(body);
+            ret = edit_message(body);
             break;
         case REBOOT_NOW:
             #if DEBUG
@@ -675,10 +658,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"0\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-            #endif
             break;
         case REBOOT_30:
             #if DEBUG
@@ -687,10 +669,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"30\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-            #endif
             break;
         case REBOOT_60:
             #if DEBUG
@@ -699,10 +680,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"60\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-            #endif
             break;
         case REBOOT_120:
             #if DEBUG
@@ -711,10 +691,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Asking the server...\"}", reply.callback_id);
             ret = answer_callback(body);
+            if(ret != ESP_OK)
+                return ret;
             ret = send_command("{\"action\":\"reboot\",\"minutes\":\"120\"}");
-            #if DEBUG
-            ESP_LOGI(TAG, "Command status: %s", esp_err_to_name(ret));
-            #endif
             break;
         case ERROR:
             #if DEBUG
@@ -802,6 +781,15 @@ esp_err_t edit_message(const char *body)
     #if DEBUG
     ESP_LOGI(TAG, "Editing message...");
     #endif
+    if(edit_id == -1)
+    {
+        #if DEBUG
+        ESP_LOGE(TAG, "Main message not found");
+        #endif
+        manage_error_telegram_api(ESP_FAIL);
+        return ESP_FAIL;
+    }
+
     const esp_http_client_config_t send_config = {
         .url = BASE_URL "/editMessageText",
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -816,7 +804,9 @@ esp_err_t edit_message(const char *body)
 
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
-
+    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+        ret = ESP_FAIL;
+    manage_error_telegram_api(ret);
 
     // Close connection
     esp_http_client_cleanup(client);
@@ -862,6 +852,10 @@ void wakeOnLan(void)
         #if DEBUG
         ESP_LOGE(TAG, "Failed - Coudn't setup socket");
         #endif // DEBUG
+        char body[200];
+        snprintf(body, sizeof(body),
+         "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"Failed to wakeup\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, MENU_KEYBOARD);
+        edit_message(body);
         return;
     }
 
