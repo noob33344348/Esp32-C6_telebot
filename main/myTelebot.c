@@ -158,6 +158,9 @@ void app_main(void)
         #endif
 
         // Check if connected
+        #if DEBUG
+        ESP_LOGI(TAG, "Checking if connected");
+        #endif // DEBUG
         for(uint8_t i = 0; i < MAX_WIFI_TRIES && !my_wifi_status(); i++)
         {
             if (i+1 == MAX_WIFI_TRIES)
@@ -186,6 +189,9 @@ void app_main(void)
         }
 
         // Check if synced
+        #if DEBUG
+        ESP_LOGI(TAG, "Checking if synced");
+        #endif // DEBUG
         for(uint8_t i = 0; i < MAX_SYNC_TRIES && !my_sync(); i++)
         {
             if (i+1 == MAX_SYNC_TRIES)
@@ -201,7 +207,6 @@ void app_main(void)
         #if DEBUG
         ESP_LOGI(TAG, "Looking for updates");
         #endif
-
         http_buffer_t http_buffer = {
             .buffer = NULL,
             .length = 0,
@@ -278,7 +283,11 @@ void app_main(void)
         // Elaborate ping
         if(ping_status > -1)
         {
-            ping_callback();
+            ret = ping_callback();
+            #if DEBUG
+            ESP_LOGI(TAG, "Ping callback status: %s", esp_err_to_name(ret));
+            #endif // DEBUG
+
             ping_status = -1;
         }
 
@@ -581,7 +590,9 @@ esp_err_t elaborate (reply_struct_t reply)
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Waking...\"}", reply.callback_id);
             ret = answer_callback(body);
-            wakeOnLan();
+            if(ret != ESP_OK)
+                return ret;
+            ret = wake_on_lan();
             break;
         case POWEROFF_MENU:
             #if DEBUG
@@ -844,7 +855,7 @@ esp_err_t send_command(const char *body)
     return ret;
 }
 
-void wakeOnLan(void)
+esp_err_t wake_on_lan(void)
 {
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock < 0)
@@ -852,11 +863,10 @@ void wakeOnLan(void)
         #if DEBUG
         ESP_LOGE(TAG, "Failed - Coudn't setup socket");
         #endif // DEBUG
-        char body[200];
+        char body[800];
         snprintf(body, sizeof(body),
          "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"Failed to wakeup\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, MENU_KEYBOARD);
-        edit_message(body);
-        return;
+        return edit_message(body);
     }
 
     // Allow broadcast
@@ -878,13 +888,14 @@ void wakeOnLan(void)
     sendto(sock, wol_packet, sizeof(wol_packet), 0,
            (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 
-    close(sock);
     #if DEBUG
     ESP_LOGI(TAG, "Magic packet sent");
     #endif
+    close(sock);
+    return ESP_OK;
 }
 
-void ping_callback()
+esp_err_t ping_callback()
 {
     #if DEBUG
     ESP_LOGI(TAG, "Ping callback");
@@ -925,7 +936,7 @@ void ping_callback()
     #if DEBUG
     ESP_LOGI(TAG, "Body: %s", body);
     #endif
-    edit_message(body);
+    return edit_message(body);
 }
 
 void test_on_ping_success(void* args, void* cb_args)

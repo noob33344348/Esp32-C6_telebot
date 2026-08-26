@@ -48,9 +48,10 @@ esp_err_t elaborate (reply_struct_t command);
  *
  *
  * @return
- *  - void
+ *  - ESP_OK on success
+ *  - Other errors on failure. See esp_err.h for error codes.
  */
-void wakeOnLan (void);
+esp_err_t wake_on_lan (void);
 
 /**
  *
@@ -67,8 +68,11 @@ esp_err_t status(void);
  *
  * @brief Callback that manages the message based on the status recived in 'ping_status'
  *
+ * @return
+ *  - ESP_OK on success
+ *  - Other errors on failure. See esp_err.h for error codes.
  */
-void ping_callback();
+esp_err_t ping_callback();
 
 /**
  *
