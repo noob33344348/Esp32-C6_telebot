@@ -92,7 +92,7 @@ static int64_t update_id = 0;
 static int64_t edit_id = -1;
 static int8_t ping_status = -1; // -1: no ping, 0: server on, 1: server off
 // If enabled abort program if ping failes
-static bool ping_abort = false;
+static volatile bool ping_abort = false;
 // How much time to spend polling (s)
 static uint8_t poll_timeout = MAX_POLL;
 
@@ -372,7 +372,7 @@ esp_err_t poll_updates(http_buffer_t *buffer, void *callback)
     // Always change url
     esp_http_client_set_url(client, url_temp);
 
-    return api_call_helper(client, manage_error_telegram_api, NULL);
+    return api_call_helper(&client, manage_error_telegram_api, NULL);
 }
 
 parse_t parse(char *response)
@@ -795,7 +795,7 @@ esp_err_t send_message(const char *body)
     }
 
 
-    return api_call_helper(client, manage_error_telegram_api, body);
+    return api_call_helper(&client, manage_error_telegram_api, body);
 }
 
 esp_err_t answer_callback(const char *body)
@@ -820,7 +820,7 @@ esp_err_t answer_callback(const char *body)
     }
 
 
-    return api_call_helper(client, manage_error_telegram_api, body);
+    return api_call_helper(&client, manage_error_telegram_api, body);
 }
 
 esp_err_t edit_message(const char *body)
@@ -852,7 +852,7 @@ esp_err_t edit_message(const char *body)
         esp_http_client_set_header(client, "Content-Type", "application/json");
     }
 
-    return api_call_helper(client, manage_error_telegram_api, body);
+    return api_call_helper(&client, manage_error_telegram_api, body);
 }
 
 esp_err_t send_command(const char *body)
@@ -875,23 +875,31 @@ esp_err_t send_command(const char *body)
         esp_http_client_set_header(client, "Content-Type", "application/json");
     }
 
-    return api_call_helper(client, manage_error_server_api, body);
+    return api_call_helper(&client, manage_error_server_api, body);
 }
 
-esp_err_t api_call_helper(esp_http_client_handle_t client, void(*error_manager)(esp_err_t), const char* body)
+esp_err_t api_call_helper(esp_http_client_handle_t *client, void(*error_manager)(esp_err_t), const char* body)
 {
     if(body != NULL)
-        esp_http_client_set_post_field(client, body, strlen(body));
+    {
+        #if DEBUG
+        ESP_LOGI(TAG, "Adding body: %s", body);
+        #endif // DEBUG
+        esp_http_client_set_post_field(*client, body, strlen(body));
+    }
 
     // Send message
-    esp_err_t ret = esp_http_client_perform(client);
+    esp_err_t ret = esp_http_client_perform(*client);
 
     // Manage errors
-    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+    #if DEBUG
+    ESP_LOGI(TAG, "Ret: %s\nHttp status: %d", esp_err_to_name(ret), esp_http_client_get_status_code(*client));
+    #endif // DEBUG
+    if(ret != ESP_OK || esp_http_client_get_status_code(*client) != 200)
     {
         ret = ESP_FAIL;
-        esp_http_client_cleanup(client);
-        client = NULL;
+        esp_http_client_cleanup(*client);
+        *client = NULL;
     }
     error_manager(ret);
 
@@ -976,9 +984,6 @@ esp_err_t ping_callback()
 
     }
 
-    #if DEBUG
-    ESP_LOGI(TAG, "Body: %s", body);
-    #endif
     return edit_message(body);
 }
 

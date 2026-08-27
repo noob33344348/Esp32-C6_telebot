@@ -170,5 +170,5 @@ void manage_error_server_api(esp_err_t err);
  *  - ESP_OK on success
  *  - Other errors on failure. See esp_err.h for error codes.
  */
-esp_err_t api_call_helper(esp_http_client_handle_t client, void(*error_manager)(esp_err_t), const char* body);
+esp_err_t api_call_helper(esp_http_client_handle_t *client, void(*error_manager)(esp_err_t), const char* body);
 #endif
