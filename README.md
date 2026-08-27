@@ -54,3 +54,13 @@ A simple telegram bot for Esp32-C6.
 #### <a href="https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/myTelebot.c">myTelebot.c</a>
 - DEBUG: enables debug if set to true.
 - TAG: the tag used in the debug.
+
+### Examples
+#### Wake On Lan
+![Demo](https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/Examples/wol_example.gif)
+
+#### Server Command
+![Demo](https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/Examples/server_command_example.gif)
+
+#### Failure
+![Demo](https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/Examples/failure_example.gif)
