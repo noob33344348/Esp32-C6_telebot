@@ -372,18 +372,7 @@ esp_err_t poll_updates(http_buffer_t *buffer, void *callback)
     // Always change url
     esp_http_client_set_url(client, url_temp);
 
-    // Send message
-    esp_err_t ret = esp_http_client_perform(client);
-
-    // Manage errors
-    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
-    {
-        ret = ESP_FAIL;
-        esp_http_client_close(client);
-    }
-    manage_error_telegram_api(ret);
-
-    return ret;
+    return api_call_helper(client, manage_error_telegram_api, NULL);
 }
 
 parse_t parse(char *response)
@@ -806,20 +795,7 @@ esp_err_t send_message(const char *body)
     }
 
 
-    esp_http_client_set_post_field(client, body, strlen(body));
-
-    // Send message
-    esp_err_t ret = esp_http_client_perform(client);
-
-    // Manage errors
-    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
-    {
-        ret = ESP_FAIL;
-        esp_http_client_close(client);
-    }
-    manage_error_telegram_api(ret);
-
-    return ret;
+    return api_call_helper(client, manage_error_telegram_api, body);
 }
 
 esp_err_t answer_callback(const char *body)
@@ -844,20 +820,7 @@ esp_err_t answer_callback(const char *body)
     }
 
 
-    esp_http_client_set_post_field(client, body, strlen(body));
-
-    // Send message
-    esp_err_t ret = esp_http_client_perform(client);
-
-    // Manage errors
-    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
-    {
-        ret = ESP_FAIL;
-        esp_http_client_close(client);
-    }
-    manage_error_telegram_api(ret);
-
-    return ret;
+    return api_call_helper(client, manage_error_telegram_api, body);
 }
 
 esp_err_t edit_message(const char *body)
@@ -889,21 +852,7 @@ esp_err_t edit_message(const char *body)
         esp_http_client_set_header(client, "Content-Type", "application/json");
     }
 
-
-    esp_http_client_set_post_field(client, body, strlen(body));
-
-    // Send message
-    esp_err_t ret = esp_http_client_perform(client);
-
-    // Manage errors
-    if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
-    {
-        ret = ESP_FAIL;
-        esp_http_client_close(client);
-    }
-    manage_error_telegram_api(ret);
-
-    return ret;
+    return api_call_helper(client, manage_error_telegram_api, body);
 }
 
 esp_err_t send_command(const char *body)
@@ -926,8 +875,13 @@ esp_err_t send_command(const char *body)
         esp_http_client_set_header(client, "Content-Type", "application/json");
     }
 
+    return api_call_helper(client, manage_error_server_api, body);
+}
 
-    esp_http_client_set_post_field(client, body, strlen(body));
+esp_err_t api_call_helper(esp_http_client_handle_t client, void(*error_manager)(esp_err_t), const char* body)
+{
+    if(body != NULL)
+        esp_http_client_set_post_field(client, body, strlen(body));
 
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
@@ -936,9 +890,10 @@ esp_err_t send_command(const char *body)
     if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
     {
         ret = ESP_FAIL;
-        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        client = NULL;
     }
-    manage_error_server_api(ret);
+    error_manager(ret);
 
     return ret;
 }
