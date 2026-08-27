@@ -30,7 +30,7 @@
 #include "myTelebot.h"
 
 // Debugging
-#define DEBUG true
+#define DEBUG false
 #define TAG "Telebot"
 
 // STATICS
