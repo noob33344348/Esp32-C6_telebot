@@ -455,7 +455,7 @@ parse_t parse(char *response)
         cJSON *message_id = cJSON_GetObjectItem(message, "message_id");
         ret.reply[ret.count].message_id = message_id->valueint;
         #if DEBUG
-        ESP_LOGI(TAG, "New update id: %d", update_id);
+        ESP_LOGI(TAG, "New update id: %lld", update_id);
         #endif
 
         if(chat_id_int != AUTHORIZED_CHAT_ID_INT) // Unauthorized user
@@ -463,82 +463,82 @@ parse_t parse(char *response)
             #if DEBUG
             ESP_LOGI(TAG, "Non authorized chat id");
             #endif
+            continue;
         }
-        else // Authorized user
+        // Authorized user
+
+        // Return requested action
+        char* text = cJSON_GetObjectItem(message, "text")->valuestring;
+
+
+        char *data = NULL;
+        char *id = NULL;
+        if(callback != NULL)
         {
-            // Return requested action
-            char* text = cJSON_GetObjectItem(message, "text")->valuestring;
+            // Data (in case of a callback query)
+            cJSON *id_data = cJSON_GetObjectItem(callback, "data");
+            data = id_data->valuestring;
 
+            // Message id (in case of a callback query)
+            cJSON *id_item = cJSON_GetObjectItem(callback, "id");
+            id = id_item->valuestring;
 
-            char *data = NULL;
-            char *id = NULL;
-            if(callback != NULL)
-            {
-                // Data (in case of a callback query)
-                cJSON *id_data = cJSON_GetObjectItem(callback, "data");
-                data = id_data->valuestring;
-
-                // Message id (in case of a callback query)
-                cJSON *id_item = cJSON_GetObjectItem(callback, "id");
-                id = id_item->valuestring;
-
-                ret.reply[ret.count].callback_id = malloc(strlen(id)+1);
-                if(ret.reply[ret.count].callback_id == NULL)
-                {
-                    #if DEBUG
-                    ESP_LOGE(TAG, "Failed - Couldn't malloc for callback_id");
-                    ESP_LOGI(TAG, "Heap: %d", esp_get_free_heap_size());
-                    #endif // DEBUG
-
-                    // Skip iteration
-                    ret.reply[ret.count].callback_id = NULL;
-                    continue;
-                }
-                strcpy(ret.reply[ret.count].callback_id, id);
-            }
-
-            // Message data
-            if(!strcmp(text, "/start"))
-            {
-                ret.reply[ret.count].command = START;
-            }
-            else if(callback != NULL)
-            {
-                if(!strcmp("home",data))
-                    ret.reply[ret.count].command = HOME;
-                else if(!strcmp("status",data))
-                    ret.reply[ret.count].command = STATUS;
-                else if(!strcmp("wake",data))
-                    ret.reply[ret.count].command = WAKE;
-                else if(!strcmp("poweroff_menu",data))
-                    ret.reply[ret.count].command = POWEROFF_MENU;
-                else if(!strcmp("poweroff_now",data))
-                    ret.reply[ret.count].command = POWEROFF_NOW;
-                else if(!strcmp("poweroff_30",data))
-                    ret.reply[ret.count].command = POWEROFF_30;
-                else if(!strcmp("poweroff_60",data))
-                    ret.reply[ret.count].command = POWEROFF_60;
-                else if(!strcmp("poweroff_120",data))
-                    ret.reply[ret.count].command = POWEROFF_120;
-                else if(!strcmp("reboot_menu",data))
-                    ret.reply[ret.count].command = REBOOT_MENU;
-                else if(!strcmp("reboot_now",data))
-                    ret.reply[ret.count].command = REBOOT_NOW;
-                else if(!strcmp("reboot_30",data))
-                    ret.reply[ret.count].command = REBOOT_30;
-                else if(!strcmp("reboot_60",data))
-                    ret.reply[ret.count].command = REBOOT_60;
-                else if(!strcmp("reboot_120",data))
-                    ret.reply[ret.count].command = REBOOT_120;
-                else
-                    ret.reply[ret.count].command = NO_COMMAND;
-            }
-            else
+            ret.reply[ret.count].callback_id = malloc(strlen(id)+1);
+            if(ret.reply[ret.count].callback_id == NULL)
             {
                 #if DEBUG
-                ESP_LOGE(TAG, "Parsing failed - unknown command");
-                #endif
+                ESP_LOGE(TAG, "Failed - Couldn't malloc for callback_id");
+                ESP_LOGI(TAG, "Heap: %d", esp_get_free_heap_size());
+                #endif // DEBUG
+
+                // Skip iteration
+                ret.reply[ret.count].callback_id = NULL;
+                continue;
             }
+            strcpy(ret.reply[ret.count].callback_id, id);
+        }
+
+        // Message data
+        if(!strcmp(text, "/start"))
+        {
+            ret.reply[ret.count].command = START;
+        }
+        else if(callback != NULL)
+        {
+            if(!strcmp("home",data))
+                ret.reply[ret.count].command = HOME;
+            else if(!strcmp("status",data))
+                ret.reply[ret.count].command = STATUS;
+            else if(!strcmp("wake",data))
+                ret.reply[ret.count].command = WAKE;
+            else if(!strcmp("poweroff_menu",data))
+                ret.reply[ret.count].command = POWEROFF_MENU;
+            else if(!strcmp("poweroff_now",data))
+                ret.reply[ret.count].command = POWEROFF_NOW;
+            else if(!strcmp("poweroff_30",data))
+                ret.reply[ret.count].command = POWEROFF_30;
+            else if(!strcmp("poweroff_60",data))
+                ret.reply[ret.count].command = POWEROFF_60;
+            else if(!strcmp("poweroff_120",data))
+                ret.reply[ret.count].command = POWEROFF_120;
+            else if(!strcmp("reboot_menu",data))
+                ret.reply[ret.count].command = REBOOT_MENU;
+            else if(!strcmp("reboot_now",data))
+                ret.reply[ret.count].command = REBOOT_NOW;
+            else if(!strcmp("reboot_30",data))
+                ret.reply[ret.count].command = REBOOT_30;
+            else if(!strcmp("reboot_60",data))
+                ret.reply[ret.count].command = REBOOT_60;
+            else if(!strcmp("reboot_120",data))
+                ret.reply[ret.count].command = REBOOT_120;
+            else
+                ret.reply[ret.count].command = NO_COMMAND;
+        }
+        else
+        {
+            #if DEBUG
+            ESP_LOGE(TAG, "Parsing failed - unknown command");
+            #endif
         }
         ret.count++;
     }
