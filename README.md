@@ -17,7 +17,7 @@ A simple telegram bot for Esp32-C6.
 ### Main cycle
 1. **Health check**: Monitor Wi-Fi connection and synchronization status, restore either if offline.
 2. **Fetch**: Poll for pending updates.
-3. **Parse**: Parse the important data from the HTTP response to a <a href="https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/my_types.h">parse_t.h</a> structure.
+3. **Parse**: Parse the important data from the HTTP response to a <a href="https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/my_types.h">parse_t</a> structure.
 4. **Elaborate**: Decide which action to undertake based on the 'command' field of parse_t. 
 5. **Free parse_t**: Free the callback_id fields of the parse_t returned from parse.
 6. **Poll speed**: Increase/Decrease the polling rate if necessary.
