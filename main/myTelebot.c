@@ -353,24 +353,36 @@ esp_err_t poll_updates(http_buffer_t *buffer, void *callback)
              BASE_URL "/getUpdates?offset=%lld&timeout=%d",
              (long long)update_id, poll_timeout);
 
-    esp_http_client_config_t pool_config = {
-        .url = url_temp,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .method = HTTP_METHOD_GET,
-        .timeout_ms = (poll_timeout + 3) * 1000,
-        .event_handler = callback,
-        .user_data = buffer,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&pool_config);
+    static esp_http_client_handle_t client = NULL;
+    if(client == NULL)// Setup https connection
+    {
+        const esp_http_client_config_t config = {
+            .url = url_temp,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .method = HTTP_METHOD_GET,
+            .timeout_ms = (poll_timeout + 3) * 1000,
+            .event_handler = callback,
+            .user_data = buffer,
+            .keep_alive_enable = true
+        };
+        client = esp_http_client_init(&config);
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+    }
 
-    // Perform request
+    // Always change url
+    esp_http_client_set_url(client, url_temp);
+
+    // Send message
     esp_err_t ret = esp_http_client_perform(client);
+
+    // Manage errors
     if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+    {
         ret = ESP_FAIL;
+        esp_http_client_close(client);
+    }
     manage_error_telegram_api(ret);
 
-    // Close connection
-    esp_http_client_cleanup(client);
     return ret;
 }
 
@@ -779,29 +791,34 @@ esp_err_t send_message(const char *body)
     ESP_LOGI(TAG, "Sending message...");
     #endif
 
-    // Setup https connection
-    const esp_http_client_config_t send_config = {
-        .url = BASE_URL "/sendMessage",
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .method = HTTP_METHOD_POST,
-        .timeout_ms = 10000
-    };
+    static esp_http_client_handle_t client = NULL;
+    if(client == NULL)// Setup https connection
+    {
+        const esp_http_client_config_t config = {
+            .url = BASE_URL "/sendMessage",
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .method = HTTP_METHOD_POST,
+            .timeout_ms = GENERAL_HTTP_TIMEOUT,
+            .keep_alive_enable = true
+        };
+        client = esp_http_client_init(&config);
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+    }
 
-    esp_http_client_handle_t client = esp_http_client_init(&send_config);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
 
     esp_http_client_set_post_field(client, body, strlen(body));
-    #if DEBUG
-    ESP_LOGI(TAG, "Sending body: %s", body);
-    #endif
+
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
+
+    // Manage errors
     if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+    {
         ret = ESP_FAIL;
+        esp_http_client_close(client);
+    }
     manage_error_telegram_api(ret);
 
-    // Close connection
-    esp_http_client_cleanup(client);
     return ret;
 }
 
@@ -811,26 +828,35 @@ esp_err_t answer_callback(const char *body)
     #if DEBUG
     ESP_LOGI(TAG, "Answering callback...");
     #endif
-    const esp_http_client_config_t send_config = {
-        .url = BASE_URL "/answerCallbackQuery",
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .method = HTTP_METHOD_POST,
-        .timeout_ms = 10000,
-    };
 
-    esp_http_client_handle_t client = esp_http_client_init(&send_config);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
+    static esp_http_client_handle_t client = NULL;
+    if(client == NULL)// Setup https connection
+    {
+        const esp_http_client_config_t config = {
+            .url = BASE_URL "/answerCallbackQuery",
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .method = HTTP_METHOD_POST,
+            .timeout_ms = GENERAL_HTTP_TIMEOUT,
+            .keep_alive_enable = true
+        };
+        client = esp_http_client_init(&config);
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+    }
+
 
     esp_http_client_set_post_field(client, body, strlen(body));
 
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
+
+    // Manage errors
     if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+    {
         ret = ESP_FAIL;
+        esp_http_client_close(client);
+    }
     manage_error_telegram_api(ret);
 
-    // Close connection
-    esp_http_client_cleanup(client);
     return ret;
 }
 
@@ -849,26 +875,34 @@ esp_err_t edit_message(const char *body)
         return ESP_FAIL;
     }
 
-    const esp_http_client_config_t send_config = {
-        .url = BASE_URL "/editMessageText",
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .method = HTTP_METHOD_POST,
-        .timeout_ms = 10000,
-    };
+    static esp_http_client_handle_t client = NULL;
+    if(client == NULL)// Setup https connection
+    {
+        const esp_http_client_config_t config = {
+            .url = BASE_URL "/editMessageText",
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .method = HTTP_METHOD_POST,
+            .timeout_ms = GENERAL_HTTP_TIMEOUT,
+            .keep_alive_enable = true
+        };
+        client = esp_http_client_init(&config);
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+    }
 
-    esp_http_client_handle_t client = esp_http_client_init(&send_config);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
 
     esp_http_client_set_post_field(client, body, strlen(body));
 
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
+
+    // Manage errors
     if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+    {
         ret = ESP_FAIL;
+        esp_http_client_close(client);
+    }
     manage_error_telegram_api(ret);
 
-    // Close connection
-    esp_http_client_cleanup(client);
     return ret;
 }
 
@@ -878,28 +912,34 @@ esp_err_t send_command(const char *body)
     ESP_LOGI(TAG, "Sending command...");
     #endif
 
-    // Setup https connection
-    const esp_http_client_config_t send_config = {
-        .url = SERVER_API_URL,
-        .method = HTTP_METHOD_POST,
-        .timeout_ms = 10000
-    };
+    static esp_http_client_handle_t client = NULL;
+    if(client == NULL) // Setup https connection
+    {
+        const esp_http_client_config_t config = {
+            .url = SERVER_API_URL,
+            .method = HTTP_METHOD_POST,
+            .timeout_ms = SERVER_HTTP_TIMEOUT,
+            .keep_alive_enable = true
+        };
+        client = esp_http_client_init(&config);
+        esp_http_client_set_header(client, "Authorization", "Bearer " API_TOKEN);
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+    }
 
-    esp_http_client_handle_t client = esp_http_client_init(&send_config);
-    esp_http_client_set_header(client, "Authorization", "Bearer " API_TOKEN);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
 
     esp_http_client_set_post_field(client, body, strlen(body));
-    #if DEBUG
-    ESP_LOGI(TAG, "Sending body: %s", body);
-    #endif
+
     // Send message
     esp_err_t ret = esp_http_client_perform(client);
+
+    // Manage errors
     if(ret == ESP_OK && esp_http_client_get_status_code(client) != 200)
+    {
         ret = ESP_FAIL;
-    // Close connection
-    esp_http_client_cleanup(client);
+        esp_http_client_close(client);
+    }
     manage_error_server_api(ret);
+
     return ret;
 }
 
