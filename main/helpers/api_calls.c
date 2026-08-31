@@ -155,7 +155,9 @@ esp_err_t api_call_helper(esp_http_client_handle_t *client, bool(*error_manager)
 
         if(ret != ESP_OK || esp_http_client_get_status_code(*client) != 200)
         {
-            ret = ESP_FAIL;
+            if(ret == ESP_OK)
+                ret = ESP_FAIL;
+
             esp_http_client_cleanup(*client);
             *client = NULL;
         }
