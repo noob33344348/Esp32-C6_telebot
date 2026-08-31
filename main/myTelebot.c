@@ -155,6 +155,9 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 
+    // Set min ps mode
+    set_my_wifi_ps(1);
+
     // Main loop
     while (1)
     {
@@ -264,6 +267,10 @@ void app_main(void)
                 // Reduce poll_timeout
                 if(poll_timeout > MIN_POLL)
                 {
+                    // Remove power saving mode
+                    if(poll_timeout == MAX_POLL)
+                        set_my_wifi_ps(0);
+
                     poll_timeout = MIN_POLL;
                     #if DEBUG
                     ESP_LOGI(TAG, "Reduced poll_timeout: %us", poll_timeout);
@@ -288,7 +295,10 @@ void app_main(void)
             {
                 poll_timeout *= 2;
                 if (poll_timeout > MAX_POLL)
+                {
                     poll_timeout = MAX_POLL;
+                    set_my_wifi_ps(1);
+                }
                 #if DEBUG
                 ESP_LOGI(TAG, "Increased poll_timeout: %us", poll_timeout);
                 #endif
