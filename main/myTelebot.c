@@ -30,7 +30,7 @@
 #include "myTelebot.h"
 
 // Debugging
-#define DEBUG false
+#define DEBUG true
 #define TAG "Telebot"
 
 // STATICS
@@ -209,6 +209,20 @@ void app_main(void)
             }
         }
 
+        // Elaborate ping
+        if(ping_status > -1)
+        {
+            #if DEBUG
+            ESP_LOGI(TAG, "Elaborating ping");
+            #endif // DEBUG
+            ret = ping_callback();
+            #if DEBUG
+            ESP_LOGI(TAG, "Ping callback status: %s", esp_err_to_name(ret));
+            #endif // DEBUG
+
+            ping_status = -1;
+        }
+
         // Look for updates
         #if DEBUG
         ESP_LOGI(TAG, "Looking for updates");
@@ -285,20 +299,6 @@ void app_main(void)
         // Free http_buffer
         if(http_buffer.buffer != NULL)
             free(http_buffer.buffer);
-
-        // Elaborate ping
-        if(ping_status > -1)
-        {
-            #if DEBUG
-            ESP_LOGI(TAG, "Elaborating ping");
-            #endif // DEBUG
-            ret = ping_callback();
-            #if DEBUG
-            ESP_LOGI(TAG, "Ping callback status: %s", esp_err_to_name(ret));
-            #endif // DEBUG
-
-            ping_status = -1;
-        }
 
         #if DEBUG
         ESP_LOGI(TAG, "Heap end: %d", esp_get_free_heap_size());
@@ -514,10 +514,10 @@ esp_err_t elaborate (reply_struct_t reply)
             #if DEBUG
             ESP_LOGI(TAG, "Elaborating - STATUS");
             #endif
+            (void)ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
             snprintf(body, sizeof(body),
                      "{\"callback_query_id\":%s,\"text\":\"Pinging...\"}", reply.callback_id);
             ret = answer_callback(body);
-            (void)ping_go(SERVER_IP_STRING, test_on_ping_success, test_on_ping_timeout);
             break;
         case WAKE:
             #if DEBUG

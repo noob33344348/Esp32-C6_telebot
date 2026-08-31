@@ -133,7 +133,7 @@ esp_err_t send_command(const char *body)
     return api_call_helper(&client, manage_error_server_api, body);
 }
 
-esp_err_t api_call_helper(esp_http_client_handle_t *client, void(*error_manager)(esp_err_t), const char* body)
+esp_err_t api_call_helper(esp_http_client_handle_t *client, bool(*error_manager)(esp_err_t), const char* body)
 {
     if(body != NULL)
     {
@@ -144,24 +144,27 @@ esp_err_t api_call_helper(esp_http_client_handle_t *client, void(*error_manager)
     }
 
     // Send message
-    esp_err_t ret = esp_http_client_perform(*client);
-
-    // Manage errors
-    #if DEBUG
-    ESP_LOGI(TAG, "Ret: %s\nHttp status: %d", esp_err_to_name(ret), esp_http_client_get_status_code(*client));
-    #endif // DEBUG
-    if(ret != ESP_OK || esp_http_client_get_status_code(*client) != 200)
+    esp_err_t ret = ESP_FAIL;
+    do
     {
-        ret = ESP_FAIL;
-        esp_http_client_cleanup(*client);
-        *client = NULL;
-    }
-    error_manager(ret);
+        ret = esp_http_client_perform(*client);
+        // Manage errors
+        #if DEBUG
+        ESP_LOGI(TAG, "Ret: %s\nHttp status: %d", esp_err_to_name(ret), esp_http_client_get_status_code(*client));
+        #endif // DEBUG
+
+        if(ret != ESP_OK || esp_http_client_get_status_code(*client) != 200)
+        {
+            ret = ESP_FAIL;
+            esp_http_client_cleanup(*client);
+            *client = NULL;
+        }
+    }while(error_manager(ret));
 
     return ret;
 }
 
-void manage_error_telegram_api(esp_err_t err)
+bool manage_error_telegram_api(esp_err_t err)
 {
     static uint8_t failed_telegram_api = 0;
     if(err == ESP_OK)
@@ -170,7 +173,7 @@ void manage_error_telegram_api(esp_err_t err)
         ESP_LOGI(TAG, "Success - Telegram API call");
         #endif // DEBUG
         failed_telegram_api = 0;
-        return;
+        return false;
     }
 
     #if DEBUG
@@ -186,9 +189,10 @@ void manage_error_telegram_api(esp_err_t err)
         #endif // DEBUG
         abort();
     }
+    return true;
 }
 
-void manage_error_server_api(esp_err_t err)
+bool manage_error_server_api(esp_err_t err)
 {
     static uint8_t failed_server_api = 0;
     if(err == ESP_OK)
@@ -197,7 +201,7 @@ void manage_error_server_api(esp_err_t err)
         ESP_LOGI(TAG, "Success - server API call");
         #endif // DEBUG
         failed_server_api = 0;
-        return;
+        return false;
     }
 
     #if DEBUG
@@ -226,5 +230,5 @@ void manage_error_server_api(esp_err_t err)
         edit_message(body);
     }
 
-
+    return false;
 }

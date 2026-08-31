@@ -147,7 +147,7 @@ bool my_sync(void);
  *
  * IMPORTANT! This function may 'abort()' if the error is critical.
  */
-void manage_error_telegram_api(esp_err_t err);
+bool manage_error_telegram_api(esp_err_t err);
 
 /**
  *
@@ -158,7 +158,7 @@ void manage_error_telegram_api(esp_err_t err);
  *
  * IMPORTANT! This function may 'abort()' if the error is critical.
  */
-void manage_error_server_api(esp_err_t err);
+bool manage_error_server_api(esp_err_t err);
 
 /**
  *
@@ -170,5 +170,5 @@ void manage_error_server_api(esp_err_t err);
  *  - ESP_OK on success
  *  - Other errors on failure. See esp_err.h for error codes.
  */
-esp_err_t api_call_helper(esp_http_client_handle_t *client, void(*error_manager)(esp_err_t), const char* body);
+esp_err_t api_call_helper(esp_http_client_handle_t *client, bool(*error_manager)(esp_err_t), const char* body);
 #endif
