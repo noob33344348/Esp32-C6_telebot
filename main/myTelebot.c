@@ -294,10 +294,11 @@ void app_main(void)
             if(parse_out.count == 0 && poll_timeout < MAX_POLL)
             {
                 poll_timeout *= 2;
-                if (poll_timeout > MAX_POLL)
+                if (poll_timeout >= MAX_POLL)
                 {
                     poll_timeout = MAX_POLL;
                     set_my_wifi_ps(1);
+
                 }
                 #if DEBUG
                 ESP_LOGI(TAG, "Increased poll_timeout: %us", poll_timeout);

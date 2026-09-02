@@ -36,7 +36,12 @@ esp_err_t send_message(const char *body)
     #endif
 
     static esp_http_client_handle_t client = NULL;
-    if(client == NULL)// Setup https connection
+    if(client != NULL)
+    {
+        auto_clean(&client);
+    }
+
+    if(client == NULL) // Setup https connection
     {
         const esp_http_client_config_t config = {
             .url = BASE_URL "/sendMessage",
@@ -61,7 +66,12 @@ esp_err_t answer_callback(const char *body)
     #endif
 
     static esp_http_client_handle_t client = NULL;
-    if(client == NULL)// Setup https connection
+    if(client != NULL)
+    {
+        auto_clean(&client);
+    }
+
+    if(client == NULL) // Setup https connection
     {
         const esp_http_client_config_t config = {
             .url = BASE_URL "/answerCallbackQuery",
@@ -94,7 +104,12 @@ esp_err_t edit_message(const char *body)
     }
 
     static esp_http_client_handle_t client = NULL;
-    if(client == NULL)// Setup https connection
+    if(client != NULL)
+    {
+        auto_clean(&client);
+    }
+
+    if(client == NULL) // Setup https connection
     {
         const esp_http_client_config_t config = {
             .url = BASE_URL "/editMessageText",
@@ -117,6 +132,11 @@ esp_err_t send_command(const char *body)
     #endif
 
     static esp_http_client_handle_t client = NULL;
+    if(client != NULL)
+    {
+        auto_clean(&client);
+    }
+
     if(client == NULL) // Setup https connection
     {
         const esp_http_client_config_t config = {
@@ -133,6 +153,21 @@ esp_err_t send_command(const char *body)
     return api_call_helper(&client, manage_error_server_api, body);
 }
 
+esp_err_t auto_clean(esp_http_client_handle_t *client)
+{
+    esp_err_t ret = ESP_OK;
+    if(poll_timeout == MAX_POLL)
+    {
+        #if DEBUG
+        ESP_LOGI(TAG, "Maximum poll time reached, autocleaning the http client handler.");
+        #endif // DEBUG
+        ret = esp_http_client_cleanup(*client);
+        *client = NULL;
+    }
+
+    return ret;
+}
+
 esp_err_t api_call_helper(esp_http_client_handle_t *client, bool(*error_manager)(esp_err_t), const char* body)
 {
     if(body != NULL)
@@ -145,23 +180,22 @@ esp_err_t api_call_helper(esp_http_client_handle_t *client, bool(*error_manager)
 
     // Send message
     esp_err_t ret = ESP_FAIL;
-    do
+
+    ret = esp_http_client_perform(*client);
+    // Manage errors
+    #if DEBUG
+    ESP_LOGI(TAG, "Ret: %s\nHttp status: %d", esp_err_to_name(ret), esp_http_client_get_status_code(*client));
+    #endif // DEBUG
+
+    if(ret != ESP_OK || esp_http_client_get_status_code(*client) != 200)
     {
-        ret = esp_http_client_perform(*client);
-        // Manage errors
-        #if DEBUG
-        ESP_LOGI(TAG, "Ret: %s\nHttp status: %d", esp_err_to_name(ret), esp_http_client_get_status_code(*client));
-        #endif // DEBUG
+        if(ret == ESP_OK)
+            ret = ESP_FAIL;
 
-        if(ret != ESP_OK || esp_http_client_get_status_code(*client) != 200)
-        {
-            if(ret == ESP_OK)
-                ret = ESP_FAIL;
-
-            esp_http_client_cleanup(*client);
-            *client = NULL;
-        }
-    }while(error_manager(ret));
+        esp_http_client_cleanup(*client);
+        *client = NULL;
+    }
+    error_manager(ret);
 
     return ret;
 }

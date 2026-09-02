@@ -171,4 +171,17 @@ bool manage_error_server_api(esp_err_t err);
  *  - Other errors on failure. See esp_err.h for error codes.
  */
 esp_err_t api_call_helper(esp_http_client_handle_t *client, bool(*error_manager)(esp_err_t), const char* body);
+
+/**
+ *
+ * @brief Check if current timeout has reached maximum allowed, in that case resets the http client before sending the request.
+ *
+ * Called at the start of api call (both to telegram and server).
+ *
+ * @return
+ *  - ESP_OK on success
+ *  - Other errors on failure. See esp_err.h for error codes.
+ */
+esp_err_t auto_clean(esp_http_client_handle_t *client);
+
 #endif
