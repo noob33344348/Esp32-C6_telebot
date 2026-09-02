@@ -57,10 +57,10 @@ A simple telegram bot for Esp32-C6.
 
 ### Examples
 #### Wake On Lan
-![Demo](https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/Examples/wol_example.gif)
+![Demo](./main/Examples/wol_example.gif?v=2)
 
 #### Server Command
-![Demo](https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/Examples/server_command_example.gif)
+![Demo](./main/Examples/server_command_example.gif?v=2)
 
 #### Failure
-![Demo](https://github.com/noob33344348/Esp32-C6_telebot/blob/main/main/Examples/failure_example.gif)
+![Demo](./main/Examples/failure_example.gif?v=2)
