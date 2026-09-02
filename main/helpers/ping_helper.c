@@ -6,6 +6,9 @@ esp_err_t ping_callback()
     ping_stop();
     char body[800];
 
+    char time_buff[64];
+    current_time(time_buff, sizeof(time_buff));
+
     // Check if abort is required
     if(ping_abort && ping_status == 0)
     {
@@ -13,7 +16,7 @@ esp_err_t ping_callback()
         ESP_LOGE(TAG, "CRITICAL! Can't reach server, but it is running; aborting...");
         #endif // DEBUG
         snprintf(body, sizeof(body),
-             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"Server can't be reached.\nBut server running.\nABORTING...\"}", AUTHORIZED_CHAT_ID_STR, edit_id);
+             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"[%s] Server can't be reached.\nBut server running.\nABORTING...\"}", AUTHORIZED_CHAT_ID_STR, edit_id, time_buff);
         edit_message(body);
         abort();
     }
@@ -26,13 +29,13 @@ esp_err_t ping_callback()
         #endif // DEBUG
 
         snprintf(body, sizeof(body),
-             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"Server can't be reached.\nServer not running...\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, MENU_KEYBOARD);
+             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"[%s] Server can't be reached.\nServer not running...\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, time_buff, MENU_KEYBOARD);
 
     }
     else
     {
         snprintf(body, sizeof(body),
-             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"%s\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, (ping_status == 0 ? "Running" : "Sleepy"), MENU_KEYBOARD);
+             "{\"chat_id\":%s,\"message_id\":%lld,\"text\":\"[%s] %s\", %s}", AUTHORIZED_CHAT_ID_STR, edit_id, time_buff, (ping_status == 0 ? "Running" : "Sleepy"), MENU_KEYBOARD);
 
     }
 

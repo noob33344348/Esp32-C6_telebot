@@ -140,6 +140,13 @@ bool my_sync(void);
 
 /**
  *
+ * @brief Returns current time in time_buff.
+ *
+ */
+void current_time(char *time_buff, uint8_t buff_size);
+
+/**
+ *
  * @brief Manage the errors of the functions calling telegram bot APIs.
  *
  *
@@ -183,5 +190,4 @@ esp_err_t api_call_helper(esp_http_client_handle_t *client, bool(*error_manager)
  *  - Other errors on failure. See esp_err.h for error codes.
  */
 esp_err_t auto_clean(esp_http_client_handle_t *client);
-
 #endif

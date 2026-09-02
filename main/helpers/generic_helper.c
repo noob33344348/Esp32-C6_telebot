@@ -22,23 +22,31 @@ bool my_sync(void)
             return false;
         }
         #if DEBUG
-        time_t now;
-        time(&now);
+        char time_buff[64];
+        current_time(time_buff, sizeof(time_buff));
 
-        struct tm timeinfo;
-        localtime_r(&now, &timeinfo);
-
-        char strftime_buf[64];
-        strftime(strftime_buf, sizeof(strftime_buf),
-                 "%c", &timeinfo);
-
-        ESP_LOGI(TAG, "Current time: %s", strftime_buf);
+        ESP_LOGI(TAG, "Current time: %s", time_buff);
         #endif
         synced = true;
         return true;
     }
     else
         return true;
+}
+
+void current_time(char *time_buff, uint8_t buff_size)
+{
+    time_t now;
+    time(&now);
+
+    // CET in winter, CEST in summer
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0", 1);
+    tzset();
+
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+
+    strftime(time_buff, buff_size, "%H:%M:%S", &timeinfo);
 }
 
 esp_err_t wake_on_lan(void)
